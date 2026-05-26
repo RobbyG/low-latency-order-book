@@ -11,6 +11,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+#main library and executable 
+
 add_library(lob_core
     src/order_book.cpp
 )
@@ -38,6 +40,8 @@ target_compile_options(lob_core
         -Wconversion
 )
 
+#testing setup
+
 enable_testing()
 
 add_executable(lob_test
@@ -50,3 +54,14 @@ target_link_libraries(lob_test
 )
 
 add_test(NAME lob_test COMMAND lob_test)
+
+#benchmarking setup
+
+add_executable(lob_bench
+    benchmarks/order_book_bench.cpp
+)
+
+target_link_libraries(lob_bench
+    PRIVATE
+        lob_core
+)
