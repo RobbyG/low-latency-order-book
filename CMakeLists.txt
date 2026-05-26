@@ -65,3 +65,4 @@ target_link_libraries(lob_bench
     PRIVATE
         lob_core
 )
+
