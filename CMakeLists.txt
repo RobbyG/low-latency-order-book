@@ -37,3 +37,16 @@ target_compile_options(lob_core
         -Wshadow
         -Wconversion
 )
+
+enable_testing()
+
+add_executable(lob_test
+    tests/order_book_tests.cpp
+)
+
+target_link_libraries(lob_test
+    PRIVATE
+        lob_core
+)
+
+add_test(NAME lob_test COMMAND lob_test)
