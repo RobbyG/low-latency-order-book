@@ -14,10 +14,6 @@ int main() {
 
     const auto start = std::chrono::steady_clock::now();
 
-    for (int i = 0; i < iterations; ++i) {
-        result += lob::add_numbers(i, i);
-    }
-
     const auto end = std::chrono::steady_clock::now();
 
     const auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();

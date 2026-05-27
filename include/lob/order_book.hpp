@@ -16,8 +16,8 @@ class OrderBook {
     std::vector<Trade> add_order(Order order);
     bool cancel_order(OrderId order_id);
 
-    [[nodiscard]] std::optional<Price> best_bid() const;
-    [[nodiscard]] std::optional<Price> best_ask() const;
+    [[nodiscard]] std::optional<Price> best_bid_price() const;
+    [[nodiscard]] std::optional<Price> best_ask_price() const;
 
     [[nodiscard]] std::optional<Quantity> best_bid_quantity() const;
     [[nodiscard]] std::optional<Quantity> best_ask_quantity() const;
@@ -39,8 +39,10 @@ class OrderBook {
 
     std::unordered_map<OrderId, OrderLocation> order_locations_;
 
-    void add_buy_order(Order order, std::vector<Trade> &trades);
-    void add_sell_order(Order order, std::vector<Trade> &trades);
+    void add_buy_order(Order &order, std::vector<Trade> &trades);
+    void add_sell_order(Order &order, std::vector<Trade> &trades);
+
+    void add_resting_order(Order &order);
 };
 
 } // namespace lob
