@@ -37,6 +37,13 @@
             "output": {
                 "outputOnFailure": true
             }
+        },
+        {
+            "name": "debug",
+            "configurePreset": "debug",
+            "output": {
+                "outputOnFailure": true
+            }
         }
     ]
 }
