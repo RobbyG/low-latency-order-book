@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <iterator>
 
 namespace lob {
@@ -157,15 +158,19 @@ void OrderBook::add_sell_order(Order &ask_order, std::vector<Trade> &trades) {
     }
 }
 
-void OrderBook::add_resting_order(Order &order) {
+void OrderBook::add_resting_order(const Order &order) {
     assert(order.quantity > 0 && "Cannot add a 0 quantity order into the order book");
+    assert(order_locations_.find(order.id) == order_locations_.end() &&
+           "Order with the same id already exists in the order book");
 
     if (order.side == Side::Buy) {
-        bids_[order.price].push_back(order);
-        order_locations_[order.id] = {Side::Buy, order.price, std::prev(bids_[order.price].end())};
+        auto &bid_queue = bids_[order.price];
+        bid_queue.push_back(order);
+        order_locations_[order.id] = {Side::Buy, order.price, std::prev(bid_queue.end())};
     } else {
-        asks_[order.price].push_back(order);
-        order_locations_[order.id] = {Side::Sell, order.price, std::prev(asks_[order.price].end())};
+        auto &ask_queue = asks_[order.price];
+        ask_queue.push_back(order);
+        order_locations_[order.id] = {Side::Sell, order.price, std::prev(ask_queue.end())};
     }
 }
 

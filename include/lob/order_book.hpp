@@ -2,6 +2,7 @@
 
 #include <lob/order.hpp>
 
+#include <compare>
 #include <list>
 #include <map>
 #include <optional>
@@ -10,39 +11,94 @@
 
 namespace lob {
 
+template <typename T, typename Tag> struct Scalar {
+  public:
+    constexpr Scalar() noexcept = default;
+    explicit constexpr Scalar(T v) noexcept : value_(v) {}
+
+    [[nodiscard]] friend constexpr bool operator==(Scalar, Scalar) noexcept = default;
+    [[nodiscard]] friend constexpr auto operator<=>(Scalar, Scalar) noexcept = default;
+
+    constexpr Scalar &operator-=(Scalar v) noexcept {
+        value_ -= v.value_;
+        return *this;
+    }
+
+    constexpr Scalar &operator+=(Scalar v) noexcept {
+        value_ += v.value_;
+        return *this;
+    }
+
+    [[nodiscard]] friend constexpr Scalar operator-(Scalar left, Scalar right) noexcept {
+        left -= right;
+        return left;
+    }
+
+    [[nodiscard]] friend constexpr Scalar operator+(Scalar left, Scalar right) noexcept {
+        left += right;
+        return left;
+    }
+
+    [[nodiscard]] constexpr T get_value() const noexcept {
+        return value_;
+    }
+
+  private:
+    T value_{};
+};
+
+struct OrderIdTag {};
+struct StpIdTag {};
+struct PriceTag {};
+struct QuantityTag {};
+
+using OrderId = Scalar<std::uint64_t, OrderIdTag>;
+using StpId = Scalar<std::uint32_t, StpIdTag>;
+using Price = Scalar<std::int64_t, PriceTag>;
+using Quantity = Scalar<std::uint64_t, QuantityTag>;
+
+enum class Side : std::uint8_t { Buy, Sell };
+
+enum class OrderType : std::uint8_t { Limit, Market };
+
+enum class TimeInForce : std::uint8_t {
+    Gtc, // good till cancel
+    Ioc, // immediate or cancel
+    Fok, // fill or kill
+    Gfd  // good for day
+};
+
+enum class SelfTradeResolve : std::uint8_t {
+    CancelNew,
+    CancelResting,
+    CancelBoth,
+    DecrementAndCancel
+};
+
+struct alignas(32) NewOrder {
+    OrderId id;
+    Price price;
+    Quantity quantity;
+    StpId stp_id; // placed here for alingment purposes
+
+    Side side;
+    OrderType order_type;
+    TimeInForce time_in_force;
+    SelfTradeResolve self_trade_resolve;
+};
+
+struct RestingOrder {
+    OrderId id;
+    Quantity quantity;
+    StpId stp_id;
+};
+
 class OrderBook {
 
   public:
-    std::vector<Trade> add_order(Order order);
-    bool cancel_order(OrderId order_id);
-
-    [[nodiscard]] std::optional<Price> best_bid_price() const;
-    [[nodiscard]] std::optional<Price> best_ask_price() const;
-
-    [[nodiscard]] std::optional<Quantity> best_bid_quantity() const;
-    [[nodiscard]] std::optional<Quantity> best_ask_quantity() const;
-
-  private:
-    using OrderQueue = std::list<Order>;
-
-    using Bids = std::map<Price, OrderQueue, std::greater<Price>>;
-    using Asks = std::map<Price, OrderQueue, std::less<Price>>;
-
-    Bids bids_;
-    Asks asks_;
-
-    struct OrderLocation {
-        Side side;
-        Price price;
-        typename OrderQueue::iterator iterator;
-    };
-
-    std::unordered_map<OrderId, OrderLocation> order_locations_;
-
-    void add_buy_order(Order &order, std::vector<Trade> &trades);
-    void add_sell_order(Order &order, std::vector<Trade> &trades);
-
-    void add_resting_order(Order &order);
+#ifndef NDEBUG
+    void validate() const;
+#endif
 };
 
 } // namespace lob

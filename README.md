@@ -4,7 +4,7 @@ A C++ limit order book / matching engine project.
 
 ## Current status
 
-Initial project infrastructure set-up
+Naive Order book implementation done
 
 - C++23
 - Cmake + Ninja build
