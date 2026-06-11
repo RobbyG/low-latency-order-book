@@ -3,14 +3,16 @@
 #include <lob/order.hpp>
 
 #include <compare>
+#include <concepts>
+#include <cstdint>
 #include <list>
 #include <map>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
 namespace lob {
-
 template <typename T, typename Tag> struct Scalar {
   public:
     constexpr Scalar() noexcept = default;
@@ -79,7 +81,7 @@ struct alignas(32) NewOrder {
     OrderId id;
     Price price;
     Quantity quantity;
-    StpId stp_id; // placed here for alingment purposes
+    StpId stp_id; // placed here for byte alingment purposes
 
     Side side;
     OrderType order_type;
@@ -87,18 +89,204 @@ struct alignas(32) NewOrder {
     SelfTradeResolve self_trade_resolve;
 };
 
-struct RestingOrder {
+static_assert(sizeof(NewOrder) == 32, "NewOrder must be 32 bytes in size");
+
+struct ValidatedNewOrder {
+    NewOrder order;
+};
+
+static_assert(sizeof(ValidatedNewOrder) == 32, "ValidatedNewOrder must be 32 bytes in size");
+
+struct alignas(32) RestingOrder {
     OrderId id;
     Quantity quantity;
     StpId stp_id;
 };
 
+static_assert(sizeof(RestingOrder) == 32, "RestingOrder must be 32 bytes in size");
+
+struct Trade {
+    OrderId aggressive_order_id;
+    OrderId resting_order_id;
+
+    Price price;
+    Quantity quantity;
+
+    Side aggressive_side;
+};
+
+class EventWriter {
+  public:
+    void on_trade(const Trade &trade) noexcept;
+};
+
+enum class AddStatus : std::uint8_t {
+    Accepted,
+
+    InvalidQuantity,
+    InvalidPrice,
+
+    InvalidOrderType,
+    InvalidTimeInForce,
+    InvalidOrderTypeTimeInForce,
+
+    DuplicateOrderId,
+    BookFull,
+
+    WouldNotFullyFill,
+};
+
+struct AddResult {
+    AddStatus status;
+
+    Quantity filled;
+    Quantity remaining;
+    std::uint32_t trade_count;
+
+    [[nodiscard]] bool accepted() const noexcept {
+        return status == AddStatus::Accepted;
+    }
+
+    [[nodiscard]] bool rejected() const noexcept {
+        return !accepted();
+    }
+};
+
+enum class CancelStatus : std::uint8_t { Cancelled, NotFound };
+
+struct CancelResult {
+    CancelStatus status;
+
+    [[nodiscard]] bool cancelled() const noexcept {
+        return status == CancelStatus::Cancelled;
+    }
+};
+
+enum class ReduceStatus : std::uint8_t { Reduced, Cancelled, NotFound, InvalidQuantity };
+
+struct ReduceResult {
+    ReduceStatus status;
+
+    Quantity old_quantity;
+    Quantity new_quantity;
+
+    [[nodiscard]] bool changed() const noexcept {
+        return status == ReduceStatus::Reduced || status == ReduceStatus::Cancelled;
+    }
+};
+
+enum class ReplaceStatus : std::uint8_t {
+    Replaced,
+    NotFound,
+
+    InvalidQuantity,
+    InvalidPrice,
+
+    InvalidOrderType,
+    InvalidTimeInForce,
+    InvalidOrderTypeTimeInForce,
+
+    DuplicateOrderId,
+    BookFull,
+
+    WouldNotFullyFill,
+};
+
+struct ReplaceResult {
+    Quantity filled;
+    Quantity remaining;
+    std::uint32_t trade_count;
+    ReplaceStatus status;
+
+    [[nodiscard]] bool replaced() const noexcept {
+        return status == ReplaceStatus::Replaced;
+    }
+
+    [[nodiscard]] bool rested() const noexcept {
+        return replaced() && remaining.get_value() != 0;
+    }
+
+    [[nodiscard]] bool failed() const noexcept {
+        return !replaced() && !rested();
+    }
+};
+
+struct CopyResult {
+    std::uint32_t written;
+    std::uint32_t available;
+
+    [[nodiscard]] bool truncated() const noexcept {
+        return written < available;
+    }
+};
+
+struct BestOrder {
+    bool has_order;
+    Price price;
+    Side side;
+};
+
+struct PriceLevel {
+    Price price;
+    Quantity total_quantity;
+    std::uint32_t order_count;
+    Side side;
+};
+
+struct OrderView {
+    OrderId id;
+    Price price;
+    Quantity quantity;
+    StpId stp_id;
+    Side side;
+    TimeInForce time_in_force;
+};
+
 class OrderBook {
 
   public:
+    OrderBook() = default;
+
+    OrderBook(const OrderBook &) = delete;
+    OrderBook &operator=(const OrderBook &) = delete;
+
+    OrderBook(const OrderBook &&) = delete;
+    OrderBook &operator=(OrderBook &&) = delete;
+
+    void reserve(std::uint32_t max_orders, std::uint32_t max_price_levels);
+    void clear() noexcept;
+
+    [[nodiscard]] AddResult add_order(const NewOrder &order, EventWriter &events) noexcept;
+    [[nodiscard]] CancelResult cancel_order(OrderId id) noexcept;
+    [[nodiscard]] ReduceResult reduce_order(OrderId id, Quantity quantity) noexcept;
+    [[nodiscard]] ReplaceResult replace_order(OrderId id, const NewOrder &order,
+                                              EventWriter &events) noexcept;
+
+    [[nodiscard]] bool best_bid(BestOrder &out) const noexcept;
+    [[nodiscard]] bool best_ask(BestOrder &out) const noexcept;
+    [[nodiscard]] bool best_order(Side side, BestOrder &out) const noexcept;
+
+    [[nodiscard]] CopyResult copy_bid_depth(std::span<PriceLevel> out) const noexcept;
+    [[nodiscard]] CopyResult copy_ask_depth(std::span<PriceLevel> out) const noexcept;
+    [[nodiscard]] CopyResult copy_depth(Side side, std::span<PriceLevel> out) const noexcept;
+
+    [[nodiscard]] bool find_order(OrderId id, OrderView &out) const noexcept;
+    [[nodiscard]] CopyResult copy_best_bid_orders(std::span<OrderView> out) const noexcept;
+    [[nodiscard]] CopyResult copy_best_ask_orders(std::span<OrderView> out) const noexcept;
+    [[nodiscard]] CopyResult copy_orders_at_price(Side side, Price price,
+                                                  std::span<OrderView> out) const noexcept;
+
+    [[nodiscard]] bool empty() const noexcept;
+    [[nodiscard]] std::uint32_t order_count() const noexcept;
+    [[nodiscard]] std::uint32_t price_level_count(Side side) const noexcept;
+
 #ifndef NDEBUG
     void validate() const;
 #endif
-};
 
+  private:
+    [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
+    [[nodiscard]] AddResult add_validated_order(const ValidatedNewOrder &order,
+                                                EventWriter &events) noexcept {};
+};
 } // namespace lob
