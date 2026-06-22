@@ -77,7 +77,7 @@ enum class SelfTradeResolve : std::uint8_t {
     DecrementAndCancel
 };
 
-struct alignas(32) NewOrder {
+struct NewOrder {
     OrderId id;
     Price price;
     Quantity quantity;
@@ -90,6 +90,7 @@ struct alignas(32) NewOrder {
 };
 
 static_assert(sizeof(NewOrder) == 32, "NewOrder must be 32 bytes in size");
+static_assert(alignof(NewOrder) == 8);
 
 struct ValidatedNewOrder {
     NewOrder order;
@@ -97,13 +98,14 @@ struct ValidatedNewOrder {
 
 static_assert(sizeof(ValidatedNewOrder) == 32, "ValidatedNewOrder must be 32 bytes in size");
 
-struct alignas(32) RestingOrder {
+struct RestingOrder {
     OrderId id;
     Quantity quantity;
     StpId stp_id;
+    TimeInForce time_in_force;
 };
 
-static_assert(sizeof(RestingOrder) == 32, "RestingOrder must be 32 bytes in size");
+static_assert(sizeof(RestingOrder) == 24, "RestingOrder must be 24 bytes in size");
 
 struct Trade {
     OrderId aggressive_order_id;
@@ -134,14 +136,14 @@ enum class AddStatus : std::uint8_t {
     BookFull,
 
     WouldNotFullyFill,
+    UnsupportedTimeInForce
 };
 
 struct AddResult {
-    AddStatus status;
-
     Quantity filled;
     Quantity remaining;
     std::uint32_t trade_count;
+    AddStatus status;
 
     [[nodiscard]] bool accepted() const noexcept {
         return status == AddStatus::Accepted;
@@ -155,6 +157,7 @@ struct AddResult {
 enum class CancelStatus : std::uint8_t { Cancelled, NotFound };
 
 struct CancelResult {
+    Quantity quantity;
     CancelStatus status;
 
     [[nodiscard]] bool cancelled() const noexcept {
@@ -165,10 +168,10 @@ struct CancelResult {
 enum class ReduceStatus : std::uint8_t { Reduced, Cancelled, NotFound, InvalidQuantity };
 
 struct ReduceResult {
-    ReduceStatus status;
-
     Quantity old_quantity;
     Quantity new_quantity;
+
+    ReduceStatus status;
 
     [[nodiscard]] bool changed() const noexcept {
         return status == ReduceStatus::Reduced || status == ReduceStatus::Cancelled;
@@ -242,7 +245,7 @@ struct OrderView {
     TimeInForce time_in_force;
 };
 
-class OrderBook {
+class OrderBook final {
 
   public:
     OrderBook() = default;
@@ -250,7 +253,7 @@ class OrderBook {
     OrderBook(const OrderBook &) = delete;
     OrderBook &operator=(const OrderBook &) = delete;
 
-    OrderBook(const OrderBook &&) = delete;
+    OrderBook(OrderBook &&) = delete;
     OrderBook &operator=(OrderBook &&) = delete;
 
     void reserve(std::uint32_t max_orders, std::uint32_t max_price_levels);
@@ -258,7 +261,7 @@ class OrderBook {
 
     [[nodiscard]] AddResult add_order(const NewOrder &order, EventWriter &events) noexcept;
     [[nodiscard]] CancelResult cancel_order(OrderId id) noexcept;
-    [[nodiscard]] ReduceResult reduce_order(OrderId id, Quantity quantity) noexcept;
+    [[nodiscard]] ReduceResult reduce_order_by(OrderId id, Quantity quantity) noexcept;
     [[nodiscard]] ReplaceResult replace_order(OrderId id, const NewOrder &order,
                                               EventWriter &events) noexcept;
 
@@ -287,6 +290,6 @@ class OrderBook {
   private:
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
     [[nodiscard]] AddResult add_validated_order(const ValidatedNewOrder &order,
-                                                EventWriter &events) noexcept {};
+                                                EventWriter &events) noexcept;
 };
 } // namespace lob
