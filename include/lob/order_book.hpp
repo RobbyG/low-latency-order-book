@@ -1,6 +1,7 @@
 #pragma once
 
 #include <lob/order.hpp>
+#include <lob/spsc_ring.hpp>
 
 #include <compare>
 #include <concepts>
@@ -58,6 +59,9 @@ using OrderId = Scalar<std::uint64_t, OrderIdTag>;
 using StpId = Scalar<std::uint32_t, StpIdTag>;
 using Price = Scalar<std::int64_t, PriceTag>;
 using Quantity = Scalar<std::uint64_t, QuantityTag>;
+
+inline constexpr std::size_t trade_ring_capacity = 1 << 17;
+using TradeRing = SpscRing<Trade, trade_ring_capacity>;
 
 enum class Side : std::uint8_t { Buy, Sell };
 
@@ -117,9 +121,28 @@ struct Trade {
     Side aggressive_side;
 };
 
-class EventWriter {
+inline void pause_cpu() noexcept {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    __asm__ volatile("yield" ::: "memory");
+#else
+#error "Unsupported architecture for pause_cpu"
+#endif
+}
+
+class EventWriter final {
   public:
-    void on_trade(const Trade &trade) noexcept;
+    explicit EventWriter(TradeRing &trade_ring) noexcept : trade_ring_(trade_ring) {}
+
+    void on_trade(const Trade &trade) noexcept {
+        while (!trade_ring_.push(trade)) {
+            pause_cpu();
+        }
+    }
+
+  private:
+    TradeRing &trade_ring_;
 };
 
 enum class AddStatus : std::uint8_t {
