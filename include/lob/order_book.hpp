@@ -1,7 +1,7 @@
 #pragma once
 
-#include <lob/order.hpp>
 #include <lob/spsc_ring.hpp>
+#include <lob/thread_util.hpp>
 
 #include <compare>
 #include <concepts>
@@ -61,7 +61,9 @@ using Price = Scalar<std::int64_t, PriceTag>;
 using Quantity = Scalar<std::uint64_t, QuantityTag>;
 
 inline constexpr std::size_t trade_ring_capacity = 1 << 17;
+inline constexpr std::size_t command_ring_capacity = 1 << 15;
 using TradeRing = SpscRing<Trade, trade_ring_capacity>;
+using CommandRing = SpscRing<Command, command_ring_capacity>;
 
 enum class Side : std::uint8_t { Buy, Sell };
 
@@ -120,16 +122,6 @@ struct Trade {
 
     Side aggressive_side;
 };
-
-inline void pause_cpu() noexcept {
-#if defined(__x86_64__) || defined(__i386__)
-    __builtin_ia32_pause();
-#elif defined(__aarch64__)
-    __asm__ volatile("yield" ::: "memory");
-#else
-#error "Unsupported architecture for pause_cpu"
-#endif
-}
 
 class EventWriter final {
   public:
@@ -245,6 +237,75 @@ struct CopyResult {
         return written < available;
     }
 };
+
+enum class CommandType : std::uint8_t { None, Add, Cancel, Reduce, Replace };
+
+struct AddCmd {
+    NewOrder order;
+};
+
+struct CancelCmd {
+    OrderId id;
+};
+
+struct ReduceCmd {
+    OrderId id;
+    Quantity new_quantity;
+};
+
+struct ReplaceCmd {
+    OrderId id;
+    NewOrder new_order;
+};
+
+struct Command {
+    CommandType type;
+
+    union {
+        std::byte dummy;
+        NewOrder add;
+        CancelCmd cancel;
+        ReduceCmd reduce;
+        ReplaceCmd replace;
+    };
+
+    Command() noexcept : type(CommandType::None), dummy{} {}
+
+    static Command make_add(NewOrder order) noexcept {
+        Command cmd;
+        cmd.type = CommandType::Add;
+        cmd.add = order;
+        return cmd;
+    }
+
+    static Command make_cancel(CancelCmd cancel) noexcept {
+        Command cmd;
+        cmd.type = CommandType::Cancel;
+        cmd.cancel = cancel;
+        return cmd;
+    }
+
+    static Command make_reduce(ReduceCmd reduce) noexcept {
+        Command cmd;
+        cmd.type = CommandType::Reduce;
+        cmd.reduce = reduce;
+        return cmd;
+    }
+
+    static Command make_replace(ReplaceCmd replace) noexcept {
+        Command cmd;
+        cmd.type = CommandType::Replace;
+        cmd.replace = replace;
+        return cmd;
+    }
+};
+
+static_assert(std::is_trivially_copyable_v<Trade>);
+static_assert(std::is_trivially_copyable_v<NewOrder>);
+static_assert(std::is_trivially_copyable_v<CancelCmd>);
+static_assert(std::is_trivially_copyable_v<ReduceCmd>);
+static_assert(std::is_trivially_copyable_v<ReplaceCmd>);
+static_assert(std::is_trivially_copyable_v<Command>);
 
 struct BestOrder {
     bool has_order;
