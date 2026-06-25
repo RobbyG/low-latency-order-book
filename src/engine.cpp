@@ -32,7 +32,7 @@ void Engine::stop() {
 void Engine::book_loop() {
     pin_to_core(2);
     Command cmd;
-    while (!stop_requested_.load(std::memory_order_relaxed)) {
+    while (!stop_engine_requested_.load(std::memory_order_relaxed)) {
         if (command_ring_.pop(cmd)) {
             switch (cmd.type) {
             case CommandType::Add:

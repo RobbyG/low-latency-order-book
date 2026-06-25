@@ -1,0 +1,1 @@
+tiny optimization - eventwriter write to tradering in small batches instead of each trade one at a time`

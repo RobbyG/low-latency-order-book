@@ -5,7 +5,7 @@
 
 #include <compare>
 #include <concepts>
-#include <cstdint>
+
 #include <list>
 #include <map>
 #include <optional>
@@ -14,56 +14,6 @@
 #include <vector>
 
 namespace lob {
-template <typename T, typename Tag> struct Scalar {
-  public:
-    constexpr Scalar() noexcept = default;
-    explicit constexpr Scalar(T v) noexcept : value_(v) {}
-
-    [[nodiscard]] friend constexpr bool operator==(Scalar, Scalar) noexcept = default;
-    [[nodiscard]] friend constexpr auto operator<=>(Scalar, Scalar) noexcept = default;
-
-    constexpr Scalar &operator-=(Scalar v) noexcept {
-        value_ -= v.value_;
-        return *this;
-    }
-
-    constexpr Scalar &operator+=(Scalar v) noexcept {
-        value_ += v.value_;
-        return *this;
-    }
-
-    [[nodiscard]] friend constexpr Scalar operator-(Scalar left, Scalar right) noexcept {
-        left -= right;
-        return left;
-    }
-
-    [[nodiscard]] friend constexpr Scalar operator+(Scalar left, Scalar right) noexcept {
-        left += right;
-        return left;
-    }
-
-    [[nodiscard]] constexpr T get_value() const noexcept {
-        return value_;
-    }
-
-  private:
-    T value_{};
-};
-
-struct OrderIdTag {};
-struct StpIdTag {};
-struct PriceTag {};
-struct QuantityTag {};
-
-using OrderId = Scalar<std::uint64_t, OrderIdTag>;
-using StpId = Scalar<std::uint32_t, StpIdTag>;
-using Price = Scalar<std::int64_t, PriceTag>;
-using Quantity = Scalar<std::uint64_t, QuantityTag>;
-
-inline constexpr std::size_t trade_ring_capacity = 1 << 17;
-inline constexpr std::size_t command_ring_capacity = 1 << 15;
-using TradeRing = SpscRing<Trade, trade_ring_capacity>;
-using CommandRing = SpscRing<Command, command_ring_capacity>;
 
 enum class Side : std::uint8_t { Buy, Sell };
 
@@ -121,20 +71,6 @@ struct Trade {
     Quantity quantity;
 
     Side aggressive_side;
-};
-
-class EventWriter final {
-  public:
-    explicit EventWriter(TradeRing &trade_ring) noexcept : trade_ring_(trade_ring) {}
-
-    void on_trade(const Trade &trade) noexcept {
-        while (!trade_ring_.push(trade)) {
-            pause_cpu();
-        }
-    }
-
-  private:
-    TradeRing &trade_ring_;
 };
 
 enum class AddStatus : std::uint8_t {

@@ -29,10 +29,7 @@ template <typename T, typename Tag> struct Scalar {
         return left;
     }
 
-    [[nodiscard]] friend constexpr
-
-        [[nodiscard]] constexpr T
-        get_value() const noexcept {
+    [[nodiscard]] constexpr T get_value() const noexcept {
         return value_;
     }
 
