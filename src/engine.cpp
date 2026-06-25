@@ -32,27 +32,27 @@ void Engine::stop() {
 void Engine::book_loop() {
     pin_to_core(2);
     Command cmd;
-    /*   while (!stop_requested_.load(std::memory_order_relaxed)) {
-           if (input_.pop(cmd)) {
-               switch (cmd.type) {
-               case CommandType::Add:
-                   (void)order_book_.add_order(cmd.add, event_writer_);
-                   break;
-               case CommandType::Cancel:
-                   (void)order_book_.cancel_order(cmd.cancel.id);
-                   break;
-               case CommandType::Reduce:
-                   (void)order_book_.reduce_order_by(cmd.reduce.id, cmd.reduce.new_quantity);
-                   break;
-               case CommandType::Replace:
-                   (void)order_book_.replace_order(cmd.replace.id, cmd.replace.new_order,
-                                                   event_writer_);
-                   break;
-               }
-           } else {
-               pause_cpu();
-           }
-}*/
+    while (!stop_requested_.load(std::memory_order_relaxed)) {
+        if (command_ring_.pop(cmd)) {
+            switch (cmd.type) {
+            case CommandType::Add:
+                (void)order_book_.add_order(cmd.add, event_writer_);
+                break;
+            case CommandType::Cancel:
+                (void)order_book_.cancel_order(cmd.cancel.id);
+                break;
+            case CommandType::Reduce:
+                (void)order_book_.reduce_order_by(cmd.reduce.id, cmd.reduce.new_quantity);
+                break;
+            case CommandType::Replace:
+                (void)order_book_.replace_order(cmd.replace.id, cmd.replace.new_order,
+                                                event_writer_);
+                break;
+            }
+        } else {
+            pause_cpu();
+        }
+    }
     book_thread_done_.store(true, std::memory_order_release);
 }
 
