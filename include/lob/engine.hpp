@@ -1,5 +1,6 @@
 #pragma once
 
+#include <lob/command.hpp>
 #include <lob/order_book.hpp>
 
 #include <atomic>

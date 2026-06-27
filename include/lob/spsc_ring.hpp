@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lob/hardware_constants.hpp>
+
 #include <array>
 #include <atomic>
 #include <new>
@@ -7,15 +9,9 @@
 
 namespace lob {
 
-#if defined(__cpp_lib_hardware_interference_size)
-inline constexpr std::size_t cache_line = std::hardware_destructive_interference_size;
-#else
-inline constexpr std::size_t cache_line = 64;
-#endif
-
 // Single Producer Single Consumer Ring Buffer
 
-template <typename T, std::size_t Capacity> class alignas(cache_line) SpscRing {
+template <typename T, std::size_t Capacity> class alignas(cache_line_size) SpscRing {
     static_assert(std::is_trivially_copyable_v<T>,
                   "SpscRing only supports trivially copyable types");
     static_assert(Capacity >= 2 && (Capacity & (Capacity - 1)) == 0,

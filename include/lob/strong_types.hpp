@@ -37,4 +37,20 @@ template <typename T, typename Tag> struct Scalar {
     T value_;
 };
 
+template <typename T, typename Tag> struct IdType {
+  public:
+    constexpre IdType() noexcept = default;
+    explicit constexpr IdType(T v) noexcept : value_(v) {}
+
+    [[nodiscard]] friend constexpr bool operator==(IdType, IdType) noexcept = default;
+    [[nodiscard]] friend constexpr auto operator<=>(IdType, IdType) noexcept = default;
+
+    [[nodiscard]] constexpr T getvalue() const noexcept {
+        return value_;
+    }
+
+  private:
+    T value_;
+};
+
 } // namespace lob
