@@ -58,13 +58,13 @@ template <typename T, std::size_t Capacity> class alignas(cache_line_size) SpscR
   private:
     static constexpr std::size_t mask = Capacity - 1;
 
-    alignas(cache_line) std::atomic<std::size_t> head_{0};
+    alignas(cache_line_size) std::atomic<std::size_t> head_{0};
     std::size_t cached_tail_{0};
 
-    alignas(cache_line) std::atomic<std::size_t> tail_{0};
+    alignas(cache_line_size) std::atomic<std::size_t> tail_{0};
     std::size_t cached_head_{0};
 
-    alignas(cache_line) std::array<T, Capacity> buffer_;
+    alignas(cache_line_size) std::array<T, Capacity> buffer_;
 };
 
 } // namespace lob

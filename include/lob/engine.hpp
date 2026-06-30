@@ -1,6 +1,7 @@
 #pragma once
 
 #include <lob/command.hpp>
+#include <lob/event_writer.hpp>
 #include <lob/order_book.hpp>
 
 #include <atomic>
@@ -9,28 +10,17 @@
 
 namespace lob {
 
-using TradeRing = SpscRing<Trade, trade_ring_capacity>;
 using CommandRing = SpscRing<Command, command_ring_capacity>;
-
-class EventWriter final {
-  public:
-    explicit EventWriter(TradeRing &trade_ring) noexcept : trade_ring_(trade_ring) {}
-
-    void on_trade(const Trade &trade) noexcept {
-        while (!trade_ring_.push(trade)) {
-            pause_cpu();
-        }
-    }
-
-  private:
-    TradeRing &trade_ring_;
-};
 
 class Engine {
   public:
-    Engine() : trade_ring_(std::make_unique<TradeRing>()), event_writer_(*trade_ring_) {
-        order_book_.reserve(1u << 20, 1u << 16);
-    }
+    Engine()
+        : command_ring_(std::make_unique<CommandRing>()),
+          trade_ring_(std::make_unique<TradeRing>()), event_writer_(*trade_ring_),
+          order_book_(OrderBookConfig{
+              .max_orders = 1u << 20,
+              .max_price_levels = 1u << 16,
+          }) {}
 
     void start();
     void stop();
@@ -48,11 +38,11 @@ class Engine {
     std::thread book_thread_;
     std::thread output_thread_;
 
-    OrderBook order_book_;
-    EventWriter event_writer_;
-
-    std::unique_ptr<TradeRing> trade_ring_;
     std::unique_ptr<CommandRing> command_ring_;
+    std::unique_ptr<TradeRing> trade_ring_;
+
+    EventWriter event_writer_;
+    OrderBook order_book_;
 
     std::atomic<bool> stop_engine_requested_{false};
     std::atomic<bool> input_thread_done_{false};

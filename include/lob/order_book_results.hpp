@@ -1,6 +1,7 @@
 #pragma once
 
 #include <lob/domain_types.hpp>
+#include <lob/order.hpp>
 
 namespace lob {
 enum class AddStatus : std::uint8_t {
@@ -102,6 +103,31 @@ struct CopyResult {
     [[nodiscard]] bool truncated() const noexcept {
         return written < available;
     }
+};
+
+// L1 view
+struct BestOrder {
+    bool has_order;
+    Price price;
+    Side side;
+};
+
+// L2 view
+struct PriceLevel {
+    Price price;
+    Quantity total_quantity;
+    std::uint32_t order_count;
+    Side side;
+};
+
+// L3 view
+struct OrderView {
+    OrderId id;
+    Price price;
+    Quantity quantity;
+    StpId stp_id;
+    Side side;
+    TimeInForce time_in_force;
 };
 
 } // namespace lob

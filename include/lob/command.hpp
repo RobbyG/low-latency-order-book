@@ -35,7 +35,7 @@ struct Command {
 
     union {
         std::byte dummy;
-        NewOrder add;
+        AddCmd add;
         CancelCmd cancel;
         ReduceCmd reduce;
         ReplaceCmd replace;
@@ -46,28 +46,28 @@ struct Command {
     static Command make_add(NewOrder order) noexcept {
         Command cmd;
         cmd.type = CommandType::Add;
-        cmd.add = order;
+        cmd.add = AddCmd{order};
         return cmd;
     }
 
-    static Command make_cancel(CancelCmd cancel) noexcept {
+    static Command make_cancel(OrderId id) noexcept {
         Command cmd;
         cmd.type = CommandType::Cancel;
-        cmd.cancel = cancel;
+        cmd.cancel = CancelCmd{id};
         return cmd;
     }
 
-    static Command make_reduce(ReduceCmd reduce) noexcept {
+    static Command make_reduce(OrderId id, Quantity new_quantity) noexcept {
         Command cmd;
         cmd.type = CommandType::Reduce;
-        cmd.reduce = reduce;
+        cmd.reduce = ReduceCmd{id, new_quantity};
         return cmd;
     }
 
-    static Command make_replace(ReplaceCmd replace) noexcept {
+    static Command make_replace(OrderId id, NewOrder order) noexcept {
         Command cmd;
         cmd.type = CommandType::Replace;
-        cmd.replace = replace;
+        cmd.replace = ReplaceCmd{id, order};
         return cmd;
     }
 };
