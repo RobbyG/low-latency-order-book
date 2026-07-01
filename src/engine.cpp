@@ -36,7 +36,7 @@ void Engine::book_loop() {
         if (command_ring_.pop(cmd)) {
             switch (cmd.type) {
             case CommandType::Add:
-                (void)order_book_.add_order(cmd.add, event_writer_);
+                (void)order_book_.add_order(cmd.add, trade_writer_);
                 break;
             case CommandType::Cancel:
                 (void)order_book_.cancel_order(cmd.cancel.id);
@@ -46,7 +46,7 @@ void Engine::book_loop() {
                 break;
             case CommandType::Replace:
                 (void)order_book_.replace_order(cmd.replace.id, cmd.replace.new_order,
-                                                event_writer_);
+                                                trade_writer_);
                 break;
             }
         } else {

@@ -1,8 +1,8 @@
 #pragma once
 
 #include <lob/command.hpp>
-#include <lob/event_writer.hpp>
 #include <lob/order_book.hpp>
+#include <lob/trade_writer.hpp>
 
 #include <atomic>
 #include <memory>
@@ -16,7 +16,7 @@ class Engine {
   public:
     Engine()
         : command_ring_(std::make_unique<CommandRing>()),
-          trade_ring_(std::make_unique<TradeRing>()), event_writer_(*trade_ring_),
+          trade_ring_(std::make_unique<TradeRing>()), trade_writer_(*trade_ring_),
           order_book_(OrderBookConfig{
               .max_orders = 1u << 20,
               .max_price_levels = 1u << 16,
@@ -41,7 +41,7 @@ class Engine {
     std::unique_ptr<CommandRing> command_ring_;
     std::unique_ptr<TradeRing> trade_ring_;
 
-    EventWriter event_writer_;
+    TradeWriter trade_writer_;
     OrderBook order_book_;
 
     std::atomic<bool> stop_engine_requested_{false};

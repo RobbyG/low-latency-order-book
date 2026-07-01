@@ -9,9 +9,9 @@ namespace lob {
 
 using TradeRing = SpscRing<Trade, trade_ring_capacity>;
 
-class EventWriter final {
+class TradeWriter final {
   public:
-    explicit EventWriter(TradeRing &trade_ring) noexcept : trade_ring_(trade_ring) {}
+    explicit TradeWriter(TradeRing &trade_ring) noexcept : trade_ring_(trade_ring) {}
 
     void on_trade(const Trade &trade) noexcept {
         while (!trade_ring_.push(trade)) {

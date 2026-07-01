@@ -3,6 +3,8 @@
 #include <lob/domain_types.hpp>
 #include <lob/order.hpp>
 
+#include <cstdint>
+
 namespace lob {
 enum class AddStatus : std::uint8_t {
     Accepted,
@@ -17,12 +19,10 @@ enum class AddStatus : std::uint8_t {
     DuplicateOrderId,
     BookFull,
 
-    WouldNotFullyFill,
-    UnsupportedTimeInForce
+    WouldNotFullyFill
 };
 
 struct AddResult {
-    Quantity filled;
     Quantity remaining;
     std::uint32_t trade_count;
     AddStatus status;
@@ -35,6 +35,7 @@ struct AddResult {
         return !accepted();
     }
 };
+static_assert(sizeof(AddResult) <= 16, "AddResult size must be <= 16 bytes");
 
 enum class CancelStatus : std::uint8_t { Cancelled, NotFound };
 
@@ -46,6 +47,7 @@ struct CancelResult {
         return status == CancelStatus::Cancelled;
     }
 };
+static_assert(sizeof(CancelResult) <= 16, "CancelResult size must be <= 16 bytes");
 
 enum class ReduceStatus : std::uint8_t { Reduced, Cancelled, NotFound, InvalidQuantity };
 
@@ -59,6 +61,7 @@ struct ReduceResult {
         return status == ReduceStatus::Reduced || status == ReduceStatus::Cancelled;
     }
 };
+static_assert(sizeof(ReduceResult) <= 24, "ReduceResult size must be <= 24 bytes");
 
 enum class ReplaceStatus : std::uint8_t {
     Replaced,
@@ -78,7 +81,6 @@ enum class ReplaceStatus : std::uint8_t {
 };
 
 struct ReplaceResult {
-    Quantity filled;
     Quantity remaining;
     std::uint32_t trade_count;
     ReplaceStatus status;
@@ -92,9 +94,10 @@ struct ReplaceResult {
     }
 
     [[nodiscard]] bool failed() const noexcept {
-        return !replaced() && !rested();
+        return !replaced();
     }
 };
+static_assert(sizeof(ReplaceResult) <= 18, "ReplaceResult size must be <= 18 bytes");
 
 struct CopyResult {
     std::uint32_t written;
@@ -107,10 +110,11 @@ struct CopyResult {
 
 // L1 view
 struct BestOrder {
-    bool has_order;
     Price price;
     Side side;
+    bool has_order;
 };
+static_assert(sizeof(BestOrder) == 16, "BestOrder size must be 16 bytes");
 
 // L2 view
 struct PriceLevel {
@@ -119,6 +123,7 @@ struct PriceLevel {
     std::uint32_t order_count;
     Side side;
 };
+static_assert(sizeof(PriceLevel) == 24, "PriceLevel size must be 24 bytes");
 
 // L3 view
 struct OrderView {
@@ -128,6 +133,8 @@ struct OrderView {
     StpId stp_id;
     Side side;
     TimeInForce time_in_force;
+    SelfTradeResolve self_trade_resolve;
 };
+static_assert(sizeof(OrderView) == 32, "OrderView size must be 32 bytes");
 
 } // namespace lob

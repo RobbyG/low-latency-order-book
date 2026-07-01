@@ -9,32 +9,32 @@
 
 namespace lob {
 
-class EventWriter;
+class TradeWriter;
 
-struct OrderBookConfig {
+namespace books {
+
+struct MapListOrderBookConfig {
     std::uint32_t max_orders;
     std::uint32_t max_price_levels;
 };
 
-class OrderBook final {
+class MapListOrderBook final {
   public:
-    explicit OrderBook(OrderBookConfig config);
+    explicit MapListOrderBook(MapListOrderBookConfig config);
 
-    OrderBook(const OrderBook &) = delete;
-    OrderBook &operator=(const OrderBook &) = delete;
+    MapListOrderBook(const MapListOrderBook &) = delete;
+    MapListOrderBook &operator=(const MapListOrderBook &) = delete;
 
-    OrderBook(OrderBook &&) = delete;
-    OrderBook &operator=(OrderBook &&) = delete;
+    MapListOrderBook(MapListOrderBook &&) = delete;
+    MapListOrderBook &operator=(MapListOrderBook &&) = delete;
 
-    void reset() noexcept;
-
-    [[nodiscard]] AddResult add_order(const NewOrder &order, EventWriter &events) noexcept;
+    [[nodiscard]] AddResult add_order(const NewOrder &order, TradeWriter &trade_writer) noexcept;
 
     /*
     [[nodiscard]] CancelResult cancel_order(OrderId id) noexcept;
     [[nodiscard]] ReduceResult reduce_order_by(OrderId id, Quantity quantity) noexcept;
     [[nodiscard]] ReplaceResult replace_order(OrderId id, const NewOrder& order,
-                                              EventWriter& events) noexcept;
+                                              TradeWriter& trade_writer) noexcept;
 
     [[nodiscard]] bool best_bid(BestOrder& out) const noexcept;
     [[nodiscard]] bool best_ask(BestOrder& out) const noexcept;
@@ -53,6 +53,8 @@ class OrderBook final {
     [[nodiscard]] bool empty() const noexcept;
     [[nodiscard]] std::uint32_t order_count() const noexcept;
     [[nodiscard]] std::uint32_t price_level_count(Side side) const noexcept;
+
+    void reset() noexcept;
     */
 
 #ifndef NDEBUG
@@ -60,11 +62,12 @@ class OrderBook final {
 #endif
 
   private:
-    void reserve(OrderBookConfig config);
+    void reserve(MapListOrderBookConfig config);
 
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
     [[nodiscard]] AddResult add_validated_order(const NewOrder &order,
-                                                EventWriter &events) noexcept;
+                                                TradeWriter &trade_writer) noexcept;
 };
 
+} // namespace books
 } // namespace lob
