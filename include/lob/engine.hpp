@@ -1,7 +1,7 @@
 #pragma once
 
+#include <lob/books/order_book_concept.hpp>
 #include <lob/command.hpp>
-#include <lob/order_book.hpp>
 #include <lob/trade_writer.hpp>
 
 #include <atomic>
@@ -12,15 +12,20 @@ namespace lob {
 
 using CommandRing = SpscRing<Command, command_ring_capacity>;
 
-class Engine {
+template <books::OrderBookCore Book> class Engine final {
   public:
-    Engine()
+    template <typename... Args>
+        requires std::constructible_from<Book, Args...>
+    explicit Engine(Args &&...args)
         : command_ring_(std::make_unique<CommandRing>()),
           trade_ring_(std::make_unique<TradeRing>()), trade_writer_(*trade_ring_),
-          order_book_(OrderBookConfig{
-              .max_orders = 1u << 20,
-              .max_price_levels = 1u << 16,
-          }) {}
+          order_book_(std::forward<Args>(args)...) {}
+
+    Engine(const Engine &) = delete;
+    Engine &operator=(const Engine &) = delete;
+
+    Engine(Engine &&) = delete;
+    Engine &operator=(Engine &&) = delete;
 
     void start();
     void stop();
@@ -42,7 +47,7 @@ class Engine {
     std::unique_ptr<TradeRing> trade_ring_;
 
     TradeWriter trade_writer_;
-    OrderBook order_book_;
+    Book order_book_;
 
     std::atomic<bool> stop_engine_requested_{false};
     std::atomic<bool> input_thread_done_{false};
