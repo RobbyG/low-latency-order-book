@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <functional>
+
 namespace lob {
 template <typename T, typename Tag> struct Scalar {
   public:
@@ -54,3 +57,9 @@ template <typename T, typename Tag> struct IdType {
 };
 
 } // namespace lob
+
+template <typename T, typename Tag> struct std::hash<lob::IdType<T, Tag>> {
+    [[nodiscard]] std::size_t operator()(lob::IdType<T, Tag> id) const noexcept {
+        return std::hash<T>{}(id.get_value());
+    }
+};

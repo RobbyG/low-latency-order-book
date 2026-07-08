@@ -97,7 +97,7 @@ struct ReplaceResult {
         return !replaced();
     }
 };
-static_assert(sizeof(ReplaceResult) <= 18, "ReplaceResult size must be <= 18 bytes");
+static_assert(sizeof(ReplaceResult) == 16, "ReplaceResult size must be 16 bytes");
 
 struct CopyResult {
     std::uint32_t written;
@@ -108,13 +108,7 @@ struct CopyResult {
     }
 };
 
-// L1 view
-struct BestOrder {
-    Price price;
-    Side side;
-    bool has_order;
-};
-static_assert(sizeof(BestOrder) == 16, "BestOrder size must be 16 bytes");
+// L1 view is just a price
 
 // L2 view
 struct PriceLevel {

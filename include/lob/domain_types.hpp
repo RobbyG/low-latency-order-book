@@ -13,7 +13,7 @@ struct StpId {};
 struct Price {};
 struct Quantity {};
 struct Notional {};
-}; // namespace tag
+} // namespace tag
 
 using OrderId = IdType<std::uint64_t, tag::OrderId>;
 using StpId = IdType<std::uint32_t, tag::StpId>;

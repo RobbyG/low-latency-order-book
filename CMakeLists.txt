@@ -55,6 +55,14 @@ target_link_libraries(lob_test
 
 add_test(NAME lob_test COMMAND lob_test)
 
+add_executable(map_list_order_book_test
+    tests/map_list_order_book_test.cpp)
+
+target_link_libraries(map_list_order_book_test PRIVATE lob_core)
+
+add_test(NAME map_list_order_book_test COMMAND map_list_order_book_test)
+
+
 #benchmarking setup
 
 add_executable(lob_bench

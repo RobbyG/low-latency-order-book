@@ -9,6 +9,9 @@ namespace lob {
 
 using TradeRing = SpscRing<Trade, trade_ring_capacity>;
 
+// matcher stalls if trade ring is full, ring size should be large enough to avoid this, but if it
+// happens, we pause the CPU to avoid busy waiting
+
 class TradeWriter final {
   public:
     explicit TradeWriter(TradeRing &trade_ring) noexcept : trade_ring_(trade_ring) {}

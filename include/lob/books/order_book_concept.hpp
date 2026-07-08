@@ -27,10 +27,10 @@ concept OrderBookCore = requires(Book &book, const NewOrder &order, OrderId id, 
 };
 
 template <typename Book>
-concept OrderBookL1View = requires(const Book &const_book, BestOrder &best, Side side) {
-    { const_book.best_bid(best) } noexcept -> std::same_as<bool>;
-    { const_book.best_ask(best) } noexcept -> std::same_as<bool>;
-    { const_book.best_order(side, best) } noexcept -> std::same_as<bool>;
+concept OrderBookL1View = requires(const Book &const_book, Price &price, Side side) {
+    { const_book.best_bid(price) } noexcept -> std::same_as<bool>;
+    { const_book.best_ask(price) } noexcept -> std::same_as<bool>;
+    { const_book.best_order(side, price) } noexcept -> std::same_as<bool>;
 };
 
 template <typename Book>
@@ -38,7 +38,6 @@ concept OrderBookL2View =
     requires(const Book &const_book, Side side, std::span<PriceLevel> price_levels) {
         { const_book.copy_bid_depth(price_levels) } noexcept -> std::same_as<CopyResult>;
         { const_book.copy_ask_depth(price_levels) } noexcept -> std::same_as<CopyResult>;
-        { const_book.copy_depth(side, price_levels) } noexcept -> std::same_as<CopyResult>;
     };
 
 template <typename Book>

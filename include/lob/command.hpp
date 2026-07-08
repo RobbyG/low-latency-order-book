@@ -71,6 +71,7 @@ struct Command {
         return cmd;
     }
 };
+static_assert(sizeof(Command) == 48, "Command must be 48 bytes in size");
 static_assert(std::is_trivially_copyable_v<Command>);
 
 } // namespace lob

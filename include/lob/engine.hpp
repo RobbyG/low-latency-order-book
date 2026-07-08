@@ -2,11 +2,15 @@
 
 #include <lob/books/order_book_concept.hpp>
 #include <lob/command.hpp>
+#include <lob/rings_config.hpp>
+#include <lob/spsc_ring.hpp>
 #include <lob/trade_writer.hpp>
 
 #include <atomic>
+#include <concepts>
 #include <memory>
 #include <thread>
+#include <utility>
 
 namespace lob {
 
@@ -28,7 +32,7 @@ template <books::OrderBookCore Book> class Engine final {
     Engine &operator=(Engine &&) = delete;
 
     void start();
-    void stop();
+    void stop() noexcept;
 
     ~Engine() {
         stop();

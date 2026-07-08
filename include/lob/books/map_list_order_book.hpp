@@ -5,7 +5,10 @@
 #include <lob/order_book_results.hpp>
 
 #include <cstdint>
+#include <list>
+#include <map>
 #include <span>
+#include <unordered_map>
 
 namespace lob {
 
@@ -26,15 +29,15 @@ class MapListOrderBook final {
     MapListOrderBook(MapListOrderBook &&) = delete;
     MapListOrderBook &operator=(MapListOrderBook &&) = delete;
 
-    [[nodiscard]] AddResult add_order(const NewOrder &order, TradeWriter &trade_writer) noexcept;
+    [[nodiscard]] AddResult add_order(const NewOrder &new_order, TradeWriter &trade_writer);
     [[nodiscard]] CancelResult cancel_order(OrderId id) noexcept;
     [[nodiscard]] ReduceResult reduce_order_by(OrderId id, Quantity quantity) noexcept;
     [[nodiscard]] ReplaceResult replace_order(OrderId id, const NewOrder &order,
-                                              TradeWriter &trade_writer) noexcept;
+                                              TradeWriter &trade_writer);
 
-    [[nodiscard]] bool best_bid(BestOrder &out) const noexcept;
-    [[nodiscard]] bool best_ask(BestOrder &out) const noexcept;
-    [[nodiscard]] bool best_order(Side side, BestOrder &out) const noexcept;
+    [[nodiscard]] bool best_bid(Price &price) const noexcept;
+    [[nodiscard]] bool best_ask(Price &price) const noexcept;
+    [[nodiscard]] bool best_order(Side side, Price &price) const noexcept;
 
     [[nodiscard]] CopyResult copy_bid_depth(std::span<PriceLevel> out) const noexcept;
     [[nodiscard]] CopyResult copy_ask_depth(std::span<PriceLevel> out) const noexcept;
@@ -57,11 +60,35 @@ class MapListOrderBook final {
 #endif
 
   private:
-    void reserve(Config config);
+    using OrderList = std::list<RestingOrder>;
+    using BidLevels = std::map<Price, OrderList, std::greater<Price>>;
+    using AskLevels = std::map<Price, OrderList, std::less<Price>>;
+
+    struct OrderLocation {
+        Side side;
+        Price price;
+        OrderList::iterator it;
+    };
+
+    using OrderIndex = std::unordered_map<OrderId, OrderLocation>;
+
+    void reserve(const Config &config);
 
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
     [[nodiscard]] AddResult add_validated_order(const NewOrder &order,
                                                 TradeWriter &trade_writer) noexcept;
+
+    template <typename Levels>
+    static void erase_from_level(Levels &levels, const OrderLocation &location) noexcept;
+
+    void erase_resting(OrderIndex::iterator index_it) noexcept;
+
+    Config config_;
+
+    BidLevels bids_;
+    AskLevels asks_;
+
+    OrderIndex order_index_;
 };
 
 } // namespace books
