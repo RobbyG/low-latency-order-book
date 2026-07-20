@@ -4,6 +4,7 @@
 #include <lob/order.hpp>
 
 #include <cstdint>
+#include <utility>
 
 namespace lob {
 enum class AddStatus : std::uint8_t {
@@ -130,5 +131,41 @@ struct OrderView {
     SelfTradeResolve self_trade_resolve;
 };
 static_assert(sizeof(OrderView) == 32, "OrderView size must be 32 bytes");
+
+namespace detail {
+[[nodiscard]] static constexpr ReplaceStatus to_replace_status(AddStatus status) noexcept {
+    switch (status) {
+    case AddStatus::Accepted:
+        return ReplaceStatus::Replaced;
+
+    case AddStatus::InvalidQuantity:
+        return ReplaceStatus::InvalidQuantity;
+
+    case AddStatus::InvalidPrice:
+        return ReplaceStatus::InvalidPrice;
+
+    case AddStatus::InvalidOrderType:
+        return ReplaceStatus::InvalidOrderType;
+
+    case AddStatus::InvalidTimeInForce:
+        return ReplaceStatus::InvalidTimeInForce;
+
+    case AddStatus::InvalidOrderTypeTimeInForce:
+        return ReplaceStatus::InvalidOrderTypeTimeInForce;
+
+    case AddStatus::DuplicateOrderId:
+        return ReplaceStatus::DuplicateOrderId;
+
+    case AddStatus::BookFull:
+        return ReplaceStatus::BookFull;
+
+    case AddStatus::WouldNotFullyFill:
+        return ReplaceStatus::WouldNotFullyFill;
+    }
+
+    std::unreachable();
+}
+
+} // namespace detail
 
 } // namespace lob

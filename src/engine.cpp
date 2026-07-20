@@ -45,8 +45,7 @@ void Engine::book_loop() {
                 (void)order_book_.reduce_order_by(cmd.reduce.id, cmd.reduce.new_quantity);
                 break;
             case CommandType::Replace:
-                (void)order_book_.replace_order(cmd.replace.id, cmd.replace.new_order,
-                                                trade_writer_);
+                (void)order_book_.replace_order(cmd.replace.id, cmd.replace.order, trade_writer_);
                 break;
             }
         } else {

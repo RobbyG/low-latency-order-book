@@ -26,7 +26,7 @@ static_assert(std::is_trivially_copyable_v<ReduceCmd>);
 
 struct ReplaceCmd {
     OrderId id;
-    NewOrder new_order;
+    NewOrder order;
 };
 static_assert(std::is_trivially_copyable_v<ReplaceCmd>);
 

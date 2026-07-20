@@ -5,6 +5,7 @@
 #include <lob/order_book_results.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <list>
 #include <map>
 #include <span>
@@ -29,7 +30,7 @@ class MapListOrderBook final {
     MapListOrderBook(MapListOrderBook &&) = delete;
     MapListOrderBook &operator=(MapListOrderBook &&) = delete;
 
-    [[nodiscard]] AddResult add_order(const NewOrder &new_order, TradeWriter &trade_writer);
+    [[nodiscard]] AddResult add_order(const NewOrder &order, TradeWriter &trade_writer);
     [[nodiscard]] CancelResult cancel_order(OrderId id) noexcept;
     [[nodiscard]] ReduceResult reduce_order_by(OrderId id, Quantity quantity) noexcept;
     [[nodiscard]] ReplaceResult replace_order(OrderId id, const NewOrder &order,
@@ -55,10 +56,6 @@ class MapListOrderBook final {
 
     void reset() noexcept;
 
-#ifndef NDEBUG
-    void validate() const;
-#endif
-
   private:
     using OrderList = std::list<RestingOrder>;
     using BidLevels = std::map<Price, OrderList, std::greater<Price>>;
@@ -75,13 +72,15 @@ class MapListOrderBook final {
     void reserve(const Config &config);
 
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
-    [[nodiscard]] AddResult add_validated_order(const NewOrder &order,
-                                                TradeWriter &trade_writer) noexcept;
-
+    [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
     template <typename Levels>
-    static void erase_from_level(Levels &levels, const OrderLocation &location) noexcept;
+    [[nodiscard]] AddResult add_into_levels(Levels levels, const NewOrder &order,
+                                            TradeWriter &trade_writer);
 
+    [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
     void erase_resting(OrderIndex::iterator index_it) noexcept;
+    template <typename Levels>
+    void erase_from_level(Levels &levels, const OrderLocation &location) noexcept;
 
     Config config_;
 
