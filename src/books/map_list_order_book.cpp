@@ -41,7 +41,10 @@ MapListOrderBook::MapListOrderBook(Config config) : config_(config) {
 AddResult MapListOrderBook::add_order(const NewOrder &order, TradeWriter &trade_writer) {
     const AddStatus status = validate_new_order(order);
     if (status != AddStatus::Accepted) {
-        return AddResult{.remaining = order.quantity, .trade_count = 0, .status = status};
+        return AddResult{.remaining = order.quantity,
+                         .trade_count = 0,
+                         .status = status,
+                         .outcome = AddOutcome::None};
     }
 
     return add_validated_order(order, trade_writer);
@@ -101,21 +104,25 @@ ReplaceResult MapListOrderBook::replace_order(OrderId id, const NewOrder &order,
 
     if (index_it == order_index_.end()) {
         // order does not exist
-        return ReplaceResult{.remaining = Quantity{0}, .status = ReplaceStatus::NotFound};
+        return ReplaceResult{.remaining = Quantity{0},
+                             .status = ReplaceStatus::NotFound,
+                             .outcome = AddOutcome::None};
     }
 
     const AddStatus status = validate_new_order(order);
     if (status != AddStatus::Accepted) {
         return ReplaceResult{.remaining = index_it->second.it->quantity,
                              .trade_count = 0,
-                             .status = lob::detail::to_replace_status(status)};
+                             .status = lob::detail::to_replace_status(status),
+                             .outcome = AddOutcome::None};
     }
 
     erase_resting(index_it);
     AddResult result = add_validated_order(order, trade_writer);
     return ReplaceResult{.remaining = result.remaining,
                          .trade_count = result.trade_count,
-                         .status = lob::detail::to_replace_status(result.status)};
+                         .status = lob::detail::to_replace_status(result.status),
+                         .outcome = result.outcome};
 }
 
 // private functions
@@ -155,39 +162,109 @@ AddResult MapListOrderBook::add_validated_order(const NewOrder &order, TradeWrit
 }
 
 template <typename Levels>
-AddResult MapListOrderBook::add_into_levels(Levels &levels, const NewOrder &order,
-                                            TradeWriter &trade_writer) {
-    if (order.time_in_force == TimeInForce::Fok) {
-        if (!can_fully_fill(order))
-            return AddResult{.remaining = order.quantity,
-                             .trade_count = 0,
-                             .status = AddStatus::WouldNotFullyFill};
-    }
+AddResult MapListOrderBook::match_and_add(Levels &levels, const NewOrder &order,
+                                          TradeWriter &trade_writer) {
 
     const auto comparator = levels.key_comp();
     auto level_it = levels.begin();
     Quantity remaining = order.quantity;
     std::uint32_t trade_count = 0;
 
-    if (order.order_type == OrderType::Limit) {
-        while (level_it != levels.end() && comparator(order.price, level_it->first)) {
-            // matched
-            auto &resting_orders = level_it->second;
-            auto resting_it = resting_orders.begin();
+    const bool is_limit = order.order_type == OrderType::Limit;
+    bool stp_decrement_and_cancel_hit = false;
 
-            while (resting_it != resting_orders.end() && remaining != Quantity{0}) {
-                // perform stp check
+    const OrderId aggressive_id = order.id;
+    const Side aggressive_side = order.side;
+    const StpId aggressive_stp_id = order.stp_id;
+    const SelfTradeResolve stp_policy = order.self_trade_resolve;
 
-                const Quantity trade_quantity = std::min(remaining, resting_it->quantity);
+    while (level_it != levels.end() && remaining != Quantity{0} &&
+           (!is_limit || !comparator(order.price, level_it->first))) {
+        // matched
+        auto &resting_orders = level_it->second;
+        auto resting_it = resting_orders.begin();
 
-                const Trade trade{.aggressive_order_id = order.id,
+        while (resting_it != resting_orders.end() && remaining != Quantity{0}) {
+
+            bool emit_trade = true;
+            // perform stp check
+            if (aggressive_stp_id == resting_it->stp_id &&
+                aggressive_stp_id !=
+                    StpId{0}) { // chose this order assuming more stps are set than not
+                switch (stp_policy) {
+
+                case SelfTradeResolve::CancelBoth:
+                    order_index_.erase(resting_it->id);
+                    resting_orders.erase(resting_it);
+
+                    if (resting_orders.empty()) {
+                        levels.erase(level_it);
+                    }
+
+                    return AddResult{.remaining = remaining,
+                                     .trade_count = trade_count,
+                                     .status = AddStatus::Accepted,
+                                     .outcome = AddOutcome::STPCancelBoth};
+
+                case SelfTradeResolve::CancelNew:
+                    return AddResult{.remaining = remaining,
+                                     .trade_count = trade_count,
+                                     .status = AddStatus::Accepted,
+                                     .outcome = AddOutcome::STPCancelNew};
+
+                case SelfTradeResolve::DecrementAndCancel:
+                    emit_trade = false;
+                    break;
+
+                case SelfTradeResolve::CancelResting:
+                    order_index_.erase(resting_it->id);
+                    resting_it = resting_orders.erase(resting_it);
+                    continue;
+                }
+            }
+
+            const Quantity trade_quantity = std::min(remaining, resting_it->quantity);
+
+            if (!emit_trade)
+                stp_decrement_and_cancel_hit = true;
+            else {
+                const Trade trade{.aggressive_order_id = aggressive_id,
                                   .resting_order_id = resting_it->id,
                                   .price = level_it->first,
                                   .quantity = trade_quantity,
-                                  .aggressive_side = order.side};
+                                  .aggressive_side = aggressive_side};
+                trade_writer.on_trade(trade);
+                ++trade_count;
+            }
+            remaining -= trade_quantity;
+            resting_it->quantity -= trade_quantity;
+
+            if (resting_it->quantity == Quantity{0}) {
+                order_index_.erase(resting_it->id);
+                resting_it = resting_orders.erase(resting_it);
             }
         }
+
+        if (resting_orders.empty()) {
+            level_it = levels.erase(level_it);
+        } else {
+            assert(remaining == Quantity{0});
+            break;
+        }
     }
+
+    AddOutcome outcome = AddOutcome::Filled;
+    if (stp_decrement_and_cancel_hit)
+        outcome = AddOutcome::STPDecrementAndCancel;
+    if (!(remaining == Quantity{0})) {
+        outcome = AddOutcome::Rested;
+        // TO DO ADD RESTING
+    }
+
+    return AddResult{.remaining = remaining,
+                     .trade_count = trade_count,
+                     .status = AddStatus::Accepted,
+                     .outcome = outcome};
 }
 
 bool MapListOrderBook::can_fully_fill(const NewOrder &order) const noexcept {

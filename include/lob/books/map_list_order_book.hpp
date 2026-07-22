@@ -74,8 +74,8 @@ class MapListOrderBook final {
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
     [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
     template <typename Levels>
-    [[nodiscard]] AddResult add_into_levels(Levels levels, const NewOrder &order,
-                                            TradeWriter &trade_writer);
+    [[nodiscard]] AddResult match_and_add(Levels &levels, const NewOrder &order,
+                                          TradeWriter &trade_writer);
 
     [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
     void erase_resting(OrderIndex::iterator index_it) noexcept;
