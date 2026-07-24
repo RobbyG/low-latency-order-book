@@ -6,8 +6,8 @@ namespace lob::books {
 
 namespace {
 
-template <typename Levels>
-bool can_fill_levels(const Levels &levels, const NewOrder &order) noexcept {
+template <typename OppositeLevels>
+bool can_fill_levels(const OppositeLevels &levels, const NewOrder &order) noexcept {
     const auto comparator = levels.key_comp();
     Quantity quantity_needed = order.quantity;
 
@@ -125,6 +125,54 @@ ReplaceResult MapListOrderBook::replace_order(OrderId id, const NewOrder &order,
                          .outcome = result.outcome};
 }
 
+bool MapListOrderBook::best_bid(PriceQuantity &pq) const noexcept {
+    if (bids_.empty())
+        return false;
+
+    const auto &[price, orders] = *bids_.begin();
+
+    Quantity total{};
+    for (const RestingOrder &order : orders)
+        total += order.quantity;
+
+    pq = PriceQuantity{.price = price, .quantity = total};
+    return true;
+}
+
+bool MapListOrderBook::best_ask(PriceQuantity &pq) const noexcept {
+    if (asks_.empty())
+        return false;
+
+    const auto &[price, orders] = *asks_.begin();
+
+    Quantity total{};
+    for (const RestingOrder &order : orders)
+        total += order.quantity;
+
+    pq = PriceQuantity{.price = price, .quantity = total};
+    return true;
+}
+
+bool MapListOrderBook::best_price_quantity(Side side, PriceQuantity &pq) const noexcept {
+    return side == Side::Buy ? best_bid(pq) : best_ask(pq);
+}
+
+bool MapListOrderBook::empty() const noexcept {
+    return order_index_.empty();
+}
+
+std::uint32_t MapListOrderBook::order_count() const noexcept {
+    return static_cast<std::uint32_t>(order_index_.size());
+}
+
+std::uint32_t MapListOrderBook::price_level_count(Side side) const noexcept {
+    if (side == Side::Buy) {
+        return static_cast<std::uint32_t>(bids_.size());
+    } else {
+        return static_cast<std::uint32_t>(asks_.size());
+    }
+}
+
 // private functions
 
 void MapListOrderBook::reserve(const Config &config) {
@@ -147,40 +195,37 @@ AddResult MapListOrderBook::add_validated_order(const NewOrder &order, TradeWrit
     Quantity remaining_quantity = order.quantity;
 
     if (order.side == Side::Buy) {
-        for (const auto &[price, orders] : asks_) {
-            if (price > order.price)
-                break;
-            for (const auto &resting_order : orders) {
-                if (resting_order.stp_id == order.stp_id)
-                    continue;
-                if (resting_order.quantity >= remaining_quantity)
-                    ;
-            }
-        }
+        return match_and_add(asks_, bids_, order, trade_writer);
     } else {
+        return match_and_add(bids_, asks_, order, trade_writer);
     }
 }
 
-template <typename Levels>
-AddResult MapListOrderBook::match_and_add(Levels &levels, const NewOrder &order,
+template <typename OppositeLevels, typename SameSideLevels>
+AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
+                                          SameSideLevels &same_side_levels, const NewOrder &order,
                                           TradeWriter &trade_writer) {
 
-    const auto comparator = levels.key_comp();
-    auto level_it = levels.begin();
+    const auto comparator = opposite_levels.key_comp();
+    auto level_it = opposite_levels.begin();
     Quantity remaining = order.quantity;
     std::uint32_t trade_count = 0;
 
-    const bool is_limit = order.order_type == OrderType::Limit;
-    bool stp_decrement_and_cancel_hit = false;
-
     const OrderId aggressive_id = order.id;
+    const Price aggressive_price = order.price;
     const Side aggressive_side = order.side;
     const StpId aggressive_stp_id = order.stp_id;
     const SelfTradeResolve stp_policy = order.self_trade_resolve;
 
-    while (level_it != levels.end() && remaining != Quantity{0} &&
-           (!is_limit || !comparator(order.price, level_it->first))) {
-        // matched
+    const bool stp_active = (aggressive_stp_id != StpId{0});
+    const OrderType aggressive_order_type = order.order_type;
+    const TimeInForce aggressive_time_in_force = order.time_in_force;
+    const bool is_limit = aggressive_order_type == OrderType::Limit;
+    bool stp_decrement_and_cancel_hit = false;
+
+    while (level_it != opposite_levels.end() && remaining != Quantity{0} &&
+           (!is_limit || !comparator(aggressive_price, level_it->first))) {
+        // matching
         auto &resting_orders = level_it->second;
         auto resting_it = resting_orders.begin();
 
@@ -189,8 +234,7 @@ AddResult MapListOrderBook::match_and_add(Levels &levels, const NewOrder &order,
             bool emit_trade = true;
             // perform stp check
             if (aggressive_stp_id == resting_it->stp_id &&
-                aggressive_stp_id !=
-                    StpId{0}) { // chose this order assuming more stps are set than not
+                stp_active) { // chose this order assuming more stps are set than not
                 switch (stp_policy) {
 
                 case SelfTradeResolve::CancelBoth:
@@ -198,7 +242,7 @@ AddResult MapListOrderBook::match_and_add(Levels &levels, const NewOrder &order,
                     resting_orders.erase(resting_it);
 
                     if (resting_orders.empty()) {
-                        levels.erase(level_it);
+                        opposite_levels.erase(level_it);
                     }
 
                     return AddResult{.remaining = remaining,
@@ -246,7 +290,7 @@ AddResult MapListOrderBook::match_and_add(Levels &levels, const NewOrder &order,
         }
 
         if (resting_orders.empty()) {
-            level_it = levels.erase(level_it);
+            level_it = opposite_levels.erase(level_it);
         } else {
             assert(remaining == Quantity{0});
             break;
@@ -255,10 +299,35 @@ AddResult MapListOrderBook::match_and_add(Levels &levels, const NewOrder &order,
 
     AddOutcome outcome = AddOutcome::Filled;
     if (stp_decrement_and_cancel_hit)
-        outcome = AddOutcome::STPDecrementAndCancel;
-    if (!(remaining == Quantity{0})) {
-        outcome = AddOutcome::Rested;
-        // TO DO ADD RESTING
+        outcome = AddOutcome::STPDecrementAndCancelFilled;
+
+    if (remaining != Quantity{0}) {
+        switch (aggressive_time_in_force) {
+        case TimeInForce::Gtc:
+        case TimeInForce::Gfd: {
+            assert(is_limit);
+            outcome = stp_decrement_and_cancel_hit ? AddOutcome::STPDecrementAndCancelRested
+                                                   : AddOutcome::Rested;
+            auto rest_level_it = same_side_levels.try_emplace(aggressive_price).first;
+            auto &resting_orders = rest_level_it->second;
+            auto resting_it = resting_orders.emplace(
+                resting_orders.end(), RestingOrder{.id = aggressive_id,
+                                                   .quantity = remaining,
+                                                   .stp_id = aggressive_stp_id,
+                                                   .time_in_force = aggressive_time_in_force});
+            [[maybe_unused]] const bool inserted =
+                order_index_
+                    .emplace(aggressive_id, OrderLocation{.side = aggressive_side,
+                                                          .price = aggressive_price,
+                                                          .it = resting_it})
+                    .second;
+            assert(inserted);
+            break;
+        }
+        case TimeInForce::Ioc:
+            outcome = AddOutcome::RemainderCancelled;
+            break;
+        }
     }
 
     return AddResult{.remaining = remaining,
@@ -283,8 +352,9 @@ void MapListOrderBook::erase_resting(OrderIndex::iterator index_it) noexcept {
     order_index_.erase(index_it);
 }
 
-template <typename Levels>
-void MapListOrderBook::erase_from_level(Levels &levels, const OrderLocation &location) noexcept {
+template <typename OppositeLevels>
+void MapListOrderBook::erase_from_level(OppositeLevels &levels,
+                                        const OrderLocation &location) noexcept {
     const auto level_it = levels.find(location.price);
     assert(level_it != levels.end());
 

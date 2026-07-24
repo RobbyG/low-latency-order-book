@@ -36,9 +36,9 @@ class MapListOrderBook final {
     [[nodiscard]] ReplaceResult replace_order(OrderId id, const NewOrder &order,
                                               TradeWriter &trade_writer);
 
-    [[nodiscard]] bool best_bid(Price &price) const noexcept;
-    [[nodiscard]] bool best_ask(Price &price) const noexcept;
-    [[nodiscard]] bool best_order(Side side, Price &price) const noexcept;
+    [[nodiscard]] bool best_bid(PriceQuantity &pq) const noexcept;
+    [[nodiscard]] bool best_ask(PriceQuantity &pq) const noexcept;
+    [[nodiscard]] bool best_price_quantity(Side side, PriceQuantity &pq) const noexcept;
 
     [[nodiscard]] CopyResult copy_bid_depth(std::span<PriceLevel> out) const noexcept;
     [[nodiscard]] CopyResult copy_ask_depth(std::span<PriceLevel> out) const noexcept;
@@ -73,14 +73,15 @@ class MapListOrderBook final {
 
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
     [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
-    template <typename Levels>
-    [[nodiscard]] AddResult match_and_add(Levels &levels, const NewOrder &order,
+    template <typename OppositeLevels, typename SameSideLevels>
+    [[nodiscard]] AddResult match_and_add(OppositeLevels &opposite_levels,
+                                          SameSideLevels &same_side_levels, const NewOrder &order,
                                           TradeWriter &trade_writer);
 
     [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
     void erase_resting(OrderIndex::iterator index_it) noexcept;
-    template <typename Levels>
-    void erase_from_level(Levels &levels, const OrderLocation &location) noexcept;
+    template <typename OppositeLevels>
+    void erase_from_level(OppositeLevels &levels, const OrderLocation &location) noexcept;
 
     Config config_;
 

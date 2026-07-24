@@ -30,7 +30,8 @@ enum class AddOutcome : std::uint8_t {
     RemainderCancelled, // for immediate or cancel (IOC)
     STPCancelNew,
     STPCancelBoth,
-    STPDecrementAndCancel
+    STPDecrementAndCancelFilled,
+    STPDecrementAndCancelRested
 };
 
 struct AddResult {
@@ -121,7 +122,13 @@ struct CopyResult {
     }
 };
 
-// L1 view is just a price
+// L1 view
+
+struct PriceQuantity {
+    Price price;
+    Quantity quantity;
+};
+static_assert(sizeof(PriceQuantity) == 16, "PriceQuantity size must be 16 bytes");
 
 // L2 view
 struct PriceLevel {
