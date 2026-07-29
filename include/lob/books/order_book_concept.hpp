@@ -27,11 +27,12 @@ concept OrderBookCore = requires(Book &book, const NewOrder &order, OrderId id, 
 };
 
 template <typename Book>
-concept OrderBookL1View = requires(const Book &const_book, Price &price, Side side) {
-    { const_book.best_bid(price) } noexcept -> std::same_as<bool>;
-    { const_book.best_ask(price) } noexcept -> std::same_as<bool>;
-    { const_book.best_order(side, price) } noexcept -> std::same_as<bool>;
-};
+concept OrderBookL1View =
+    requires(const Book &const_book, PriceQuantity &price_quantity, Side side) {
+        { const_book.best_bid(price_quantity) } noexcept -> std::same_as<bool>;
+        { const_book.best_ask(price_quantity) } noexcept -> std::same_as<bool>;
+        { const_book.best_price_quantity(side, price_quantity) } noexcept -> std::same_as<bool>;
+    };
 
 template <typename Book>
 concept OrderBookL2View =
@@ -53,7 +54,7 @@ concept OrderBookL3View = requires(const Book &const_book, OrderId id, Side side
 };
 
 template <typename Book>
-concept OrderBookStats = requires(Book &book, const Book &const_book, Side side) {
+concept OrderBookStats = requires(const Book &const_book, Side side) {
     { const_book.empty() } noexcept -> std::same_as<bool>;
     { const_book.order_count() } noexcept -> std::same_as<std::uint32_t>;
     { const_book.price_level_count(side) } noexcept -> std::same_as<std::uint32_t>;

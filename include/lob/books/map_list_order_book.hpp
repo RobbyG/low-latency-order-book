@@ -8,6 +8,7 @@
 #include <functional>
 #include <list>
 #include <map>
+#include <memory_resource>
 #include <span>
 #include <unordered_map>
 
@@ -57,9 +58,9 @@ class MapListOrderBook final {
     void reset() noexcept;
 
   private:
-    using OrderList = std::list<RestingOrder>;
-    using BidLevels = std::map<Price, OrderList, std::greater<Price>>;
-    using AskLevels = std::map<Price, OrderList, std::less<Price>>;
+    using OrderList = std::pmr::list<RestingOrder>;
+    using BidLevels = std::pmr::map<Price, OrderList, std::greater<Price>>;
+    using AskLevels = std::pmr::map<Price, OrderList, std::less<Price>>;
 
     struct OrderLocation {
         Side side;
@@ -67,11 +68,12 @@ class MapListOrderBook final {
         OrderList::iterator it;
     };
 
-    using OrderIndex = std::unordered_map<OrderId, OrderLocation>;
+    using OrderIndex = std::pmr::unordered_map<OrderId, OrderLocation>;
 
     void reserve(const Config &config);
 
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
+    [[nodiscard]] AddStatus validate_new_replace_order(const NewOrder &order) const noexcept;
     [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
     template <typename OppositeLevels, typename SameSideLevels>
     [[nodiscard]] AddResult match_and_add(OppositeLevels &opposite_levels,
@@ -85,10 +87,17 @@ class MapListOrderBook final {
 
     Config config_;
 
-    BidLevels bids_;
-    AskLevels asks_;
+    // TODO: change values from hardcoded
+    static constexpr std::pmr::pool_options kPoolOptions{
+        .max_blocks_per_chunk = 4096,
+        .largest_required_pool_block = 128,
+    };
+    std::pmr::unsynchronized_pool_resource pool_{kPoolOptions};
 
-    OrderIndex order_index_;
+    BidLevels bids_{&pool_};
+    AskLevels asks_{&pool_};
+
+    OrderIndex order_index_{&pool_};
 };
 
 } // namespace books

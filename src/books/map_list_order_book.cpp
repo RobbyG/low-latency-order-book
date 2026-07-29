@@ -1,32 +1,112 @@
 #include <lob/books/map_list_order_book.hpp>
 
+#include <algorithm>
 #include <cassert>
+#include <utility>
 
 namespace lob::books {
 
 namespace {
 
 template <typename OppositeLevels>
-bool can_fill_levels(const OppositeLevels &levels, const NewOrder &order) noexcept {
+[[nodiscard]] bool can_fill_levels(const OppositeLevels &levels, const NewOrder &order) noexcept {
     const auto comparator = levels.key_comp();
+    const bool is_limit = order.order_type == OrderType::Limit;
+    const bool stp_active = order.stp_id != StpId{0};
+
     Quantity quantity_needed = order.quantity;
 
     for (const auto &[price, orders] : levels) {
-        if (comparator(price, order.price))
+        if (is_limit && comparator(order.price, price)) {
             break;
+        }
 
         for (const auto &resting_order : orders) {
-            if (resting_order.stp_id == order.stp_id &&
-                order.self_trade_resolve != SelfTradeResolve::DecrementAndCancel)
-                continue;
-            if (resting_order.quantity >= quantity_needed)
+            if (stp_active && resting_order.stp_id == order.stp_id) {
+                switch (order.self_trade_resolve) {
+                case SelfTradeResolve::CancelNew:
+                case SelfTradeResolve::CancelBoth:
+                    return false;
+
+                case SelfTradeResolve::CancelResting:
+                    continue;
+
+                case SelfTradeResolve::DecrementAndCancel:
+                    break;
+                }
+            }
+
+            if (resting_order.quantity >= quantity_needed) {
                 return true;
+            }
 
             quantity_needed -= resting_order.quantity;
         }
     }
 
     return false;
+}
+
+template <typename Levels>
+[[nodiscard]] CopyResult copy_depth_from(const Levels &levels, std::span<PriceLevel> out) noexcept {
+
+    std::uint32_t copied = 0;
+
+    for (const auto &[price, orders] : levels) {
+        if (copied == out.size()) {
+            break;
+        }
+
+        Quantity total_quantity{0};
+
+        for (const auto &order : orders) {
+            total_quantity += order.quantity;
+        }
+
+        out[copied++] = PriceLevel{
+            .price = price,
+            .quantity = total_quantity,
+        };
+    }
+
+    return CopyResult{
+        .copied = copied,
+        .available = levels.size(),
+    };
+}
+
+template <typename Levels>
+[[nodiscard]] CopyResult copy_orders_from(const Levels &levels, Side side, Price price,
+                                          std::span<OrderView> out) noexcept {
+    std::uint32_t copied = 0;
+    auto level_it = levels.find(price);
+
+    if (level_it == levels.end()) {
+        return CopyResult{
+            .copied = 0,
+            .available = 0,
+        };
+    }
+
+    const auto &orders = level_it->second;
+
+    for (const auto &order : orders) {
+        if (copied == out.size()) {
+            break;
+        }
+
+        out[copied++] = OrderView{.id = order.id,
+                                  .price = price,
+                                  .quantity = order.quantity,
+                                  .stp_id = order.stp_id,
+                                  .side = side,
+                                  .time_in_force = order.time_in_force};
+    }
+
+    return CopyResult{
+        .copied = copied,
+        .available = orders.size(),
+    };
 }
 
 } // namespace
@@ -109,7 +189,7 @@ ReplaceResult MapListOrderBook::replace_order(OrderId id, const NewOrder &order,
                              .outcome = AddOutcome::None};
     }
 
-    const AddStatus status = validate_new_order(order);
+    const AddStatus status = validate_new_replace_order(order, id);
     if (status != AddStatus::Accepted) {
         return ReplaceResult{.remaining = index_it->second.it->quantity,
                              .trade_count = 0,
@@ -173,6 +253,60 @@ std::uint32_t MapListOrderBook::price_level_count(Side side) const noexcept {
     }
 }
 
+CopyResult MapListOrderBook::copy_bid_depth(std::span<PriceLevel> out) const noexcept {
+    return copy_depth_from(bids_, out);
+}
+
+CopyResult MapListOrderBook::copy_ask_depth(std::span<PriceLevel> out) const noexcept {
+    return copy_depth_from(asks_, out);
+}
+
+CopyResult MapListOrderBook::copy_depth(Side side, std::span<PriceLevel> out) const noexcept {
+
+    switch (side) {
+    case Side::Buy:
+        return copy_bid_depth(out);
+    case Side::Sell:
+        return copy_ask_depth(out);
+    }
+
+    std::unreachable();
+}
+
+bool MapListOrderBook::find_order(OrderId id, OrderView &out) const noexcept {
+    auto order_it = order_index_.find(id);
+    if (order_it == order_index_.end()) {
+        return false;
+    }
+
+    const OrderLocation &location = order_it->second;
+    out = OrderView{.id = location.it->id,
+                    .price = location.price,
+                    .quantity = location.it->quantity,
+                    .stp_id = location.it->stp_id,
+                    .side = location.side,
+                    .time_in_force = location.it->time_in_force};
+    return true;
+}
+
+CopyResult MapListOrderBook::copy_best_bid_orders(std::span<OrderView> out) const noexcept {
+    return copy_orders_from(bids_, Side::Buy, bids_.begin()->first, out);
+}
+CopyResult MapListOrderBook::copy_best_ask_orders(std::span<OrderView> out) const noexcept {
+    return copy_orders_from(asks_, Side::Sell, asks_.begin()->first, out);
+}
+CopyResult MapListOrderBook::copy_orders_at_price(Side side, Price price,
+                                                  std::span<OrderView> out) const noexcept {
+    switch (side) {
+    case Side::Buy:
+        return copy_orders_from(bids_, Side::Buy, price, out);
+    case Side::Sell:
+        return copy_orders_from(asks_, Side::Sell, price, out);
+    }
+
+    std::unreachable();
+}
+
 // private functions
 
 void MapListOrderBook::reserve(const Config &config) {
@@ -181,6 +315,19 @@ void MapListOrderBook::reserve(const Config &config) {
 
 AddStatus MapListOrderBook::validate_new_order(const NewOrder &order) const noexcept {
     if (order_index_.contains(order.id)) {
+        return AddStatus::DuplicateOrderId;
+    }
+
+    if (order.time_in_force == TimeInForce::Fok && !can_fully_fill(order)) {
+        return AddStatus::WouldNotFullyFill;
+    }
+
+    return AddStatus::Accepted;
+}
+
+AddStatus MapListOrderBook::validate_new_replace_order(const NewOrder &order,
+                                                       OrderId id) const noexcept {
+    if (order_index_.contains(order.id) && order.id != id) {
         return AddStatus::DuplicateOrderId;
     }
 
@@ -228,6 +375,7 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
         // matching
         auto &resting_orders = level_it->second;
         auto resting_it = resting_orders.begin();
+        const Price level_price = level_it->first;
 
         while (resting_it != resting_orders.end() && remaining != Quantity{0}) {
 
@@ -274,7 +422,7 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
             else {
                 const Trade trade{.aggressive_order_id = aggressive_id,
                                   .resting_order_id = resting_it->id,
-                                  .price = level_it->first,
+                                  .price = level_price,
                                   .quantity = trade_quantity,
                                   .aggressive_side = aggressive_side};
                 trade_writer.on_trade(trade);
@@ -308,7 +456,14 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
             assert(is_limit);
             outcome = stp_decrement_and_cancel_hit ? AddOutcome::STPDecrementAndCancelRested
                                                    : AddOutcome::Rested;
-            auto rest_level_it = same_side_levels.try_emplace(aggressive_price).first;
+
+            auto hint = same_side_levels.begin();
+            const bool new_best = (hint == same_side_levels.end()) ||
+                                  same_side_levels.key_comp()(aggressive_price, hint->first);
+
+            auto rest_level_it = new_best ? same_side_levels.try_emplace(hint, aggressive_price)
+                                          : same_side_levels.try_emplace(aggressive_price).first;
+
             auto &resting_orders = rest_level_it->second;
             auto resting_it = resting_orders.emplace(
                 resting_orders.end(), RestingOrder{.id = aggressive_id,

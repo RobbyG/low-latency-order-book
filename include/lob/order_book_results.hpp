@@ -147,7 +147,6 @@ struct OrderView {
     StpId stp_id;
     Side side;
     TimeInForce time_in_force;
-    SelfTradeResolve self_trade_resolve;
 };
 static_assert(sizeof(OrderView) == 32, "OrderView size must be 32 bytes");
 
