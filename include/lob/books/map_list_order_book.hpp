@@ -21,7 +21,7 @@ namespace books {
 class MapListOrderBook final {
   public:
     struct Config {
-        std::uint32_t max_orders{};
+        std::uint32_t reserve_orders{};
     };
     explicit MapListOrderBook(Config config);
 
@@ -73,17 +73,18 @@ class MapListOrderBook final {
     void reserve(const Config &config);
 
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
-    [[nodiscard]] AddStatus validate_new_replace_order(const NewOrder &order) const noexcept;
+    [[nodiscard]] AddStatus validate_new_replace_order(const NewOrder &order,
+                                                       OrderId id) const noexcept;
     [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
-    template <typename OppositeLevels, typename SameSideLevels>
-    [[nodiscard]] AddResult match_and_add(OppositeLevels &opposite_levels,
-                                          SameSideLevels &same_side_levels, const NewOrder &order,
-                                          TradeWriter &trade_writer);
+    template <typename Levels, typename SameSideLevels>
+    [[nodiscard]] AddResult match_and_add(Levels &opposite_levels, SameSideLevels &same_side_levels,
+                                          const NewOrder &order, TradeWriter &trade_writer);
 
     [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
+    bool MapListOrderBook::can_fully_fill(const NewOrder &order, OrderId id) const noexcept;
     void erase_resting(OrderIndex::iterator index_it) noexcept;
-    template <typename OppositeLevels>
-    void erase_from_level(OppositeLevels &levels, const OrderLocation &location) noexcept;
+    template <typename Levels>
+    void erase_from_level(Levels &levels, const OrderLocation &location) noexcept;
 
     Config config_;
 

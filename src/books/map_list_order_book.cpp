@@ -2,14 +2,15 @@
 
 #include <algorithm>
 #include <cassert>
+#include <exception>
 #include <utility>
 
 namespace lob::books {
 
 namespace {
 
-template <typename OppositeLevels>
-[[nodiscard]] bool can_fill_levels(const OppositeLevels &levels, const NewOrder &order) noexcept {
+template <typename Levels>
+[[nodiscard]] bool can_fill_levels(const Levels &levels, const NewOrder &order) noexcept {
     const auto comparator = levels.key_comp();
     const bool is_limit = order.order_type == OrderType::Limit;
     const bool stp_active = order.stp_id != StpId{0};
@@ -48,6 +49,64 @@ template <typename OppositeLevels>
 }
 
 template <typename Levels>
+[[nodiscard]] bool can_fill_levels(const Levels &levels, const NewOrder &order,
+                                   OrderId id) noexcept {
+    const auto comparator = levels.key_comp();
+    const bool is_limit = order.order_type == OrderType::Limit;
+    const bool stp_active = order.stp_id != StpId{0};
+
+    Quantity quantity_needed = order.quantity;
+
+    for (const auto &[price, orders] : levels) {
+        if (is_limit && comparator(order.price, price)) {
+            break;
+        }
+
+        for (const auto &resting_order : orders) {
+            if (resting_order.id == id)
+                continue;
+
+            if (stp_active && resting_order.stp_id == order.stp_id) {
+                switch (order.self_trade_resolve) {
+                case SelfTradeResolve::CancelNew:
+                case SelfTradeResolve::CancelBoth:
+                    return false;
+
+                case SelfTradeResolve::CancelResting:
+                    continue;
+
+                case SelfTradeResolve::DecrementAndCancel:
+                    break;
+                }
+            }
+
+            if (resting_order.quantity >= quantity_needed) {
+                return true;
+            }
+
+            quantity_needed -= resting_order.quantity;
+        }
+    }
+
+    return false;
+}
+
+template <typename Levels>
+[[nodiscard]] bool best_price_quantity_from(const Levels &levels, PriceQuantity &pq) noexcept {
+    if (levels.empty())
+        return false;
+
+    const auto &[price, orders] = *levels.begin();
+
+    Quantity total{};
+    for (const RestingOrder &order : orders)
+        total += order.quantity;
+
+    pq = PriceQuantity{.price = price, .quantity = total};
+    return true;
+}
+
+template <typename Levels>
 [[nodiscard]] CopyResult copy_depth_from(const Levels &levels, std::span<PriceLevel> out) noexcept {
 
     std::uint32_t copied = 0;
@@ -70,8 +129,8 @@ template <typename Levels>
     }
 
     return CopyResult{
-        .copied = copied,
-        .available = levels.size(),
+        .written = copied,
+        .available = static_cast<std::uint32_t>(levels.size()),
     };
 }
 
@@ -83,7 +142,7 @@ template <typename Levels>
 
     if (level_it == levels.end()) {
         return CopyResult{
-            .copied = 0,
+            .written = 0,
             .available = 0,
         };
     }
@@ -104,8 +163,8 @@ template <typename Levels>
     }
 
     return CopyResult{
-        .copied = copied,
-        .available = orders.size(),
+        .written = copied,
+        .available = static_cast<std::uint32_t>(orders.size()),
     };
 }
 
@@ -119,6 +178,8 @@ MapListOrderBook::MapListOrderBook(Config config) : config_(config) {
 // core mutation api
 
 AddResult MapListOrderBook::add_order(const NewOrder &order, TradeWriter &trade_writer) {
+    assert(order.quantity != Quantity{0});
+
     const AddStatus status = validate_new_order(order);
     if (status != AddStatus::Accepted) {
         return AddResult{.remaining = order.quantity,
@@ -185,6 +246,7 @@ ReplaceResult MapListOrderBook::replace_order(OrderId id, const NewOrder &order,
     if (index_it == order_index_.end()) {
         // order does not exist
         return ReplaceResult{.remaining = Quantity{0},
+                             .trade_count = 0,
                              .status = ReplaceStatus::NotFound,
                              .outcome = AddOutcome::None};
     }
@@ -206,31 +268,11 @@ ReplaceResult MapListOrderBook::replace_order(OrderId id, const NewOrder &order,
 }
 
 bool MapListOrderBook::best_bid(PriceQuantity &pq) const noexcept {
-    if (bids_.empty())
-        return false;
-
-    const auto &[price, orders] = *bids_.begin();
-
-    Quantity total{};
-    for (const RestingOrder &order : orders)
-        total += order.quantity;
-
-    pq = PriceQuantity{.price = price, .quantity = total};
-    return true;
+    return best_price_quantity_from(bids_, pq);
 }
 
 bool MapListOrderBook::best_ask(PriceQuantity &pq) const noexcept {
-    if (asks_.empty())
-        return false;
-
-    const auto &[price, orders] = *asks_.begin();
-
-    Quantity total{};
-    for (const RestingOrder &order : orders)
-        total += order.quantity;
-
-    pq = PriceQuantity{.price = price, .quantity = total};
-    return true;
+    return best_price_quantity_from(asks_, pq);
 }
 
 bool MapListOrderBook::best_price_quantity(Side side, PriceQuantity &pq) const noexcept {
@@ -290,9 +332,21 @@ bool MapListOrderBook::find_order(OrderId id, OrderView &out) const noexcept {
 }
 
 CopyResult MapListOrderBook::copy_best_bid_orders(std::span<OrderView> out) const noexcept {
+    if (bids_.empty()) {
+        return CopyResult{
+            .written = 0,
+            .available = 0,
+        };
+    }
     return copy_orders_from(bids_, Side::Buy, bids_.begin()->first, out);
 }
 CopyResult MapListOrderBook::copy_best_ask_orders(std::span<OrderView> out) const noexcept {
+    if (asks_.empty()) {
+        return CopyResult{
+            .written = 0,
+            .available = 0,
+        };
+    }
     return copy_orders_from(asks_, Side::Sell, asks_.begin()->first, out);
 }
 CopyResult MapListOrderBook::copy_orders_at_price(Side side, Price price,
@@ -310,7 +364,7 @@ CopyResult MapListOrderBook::copy_orders_at_price(Side side, Price price,
 // private functions
 
 void MapListOrderBook::reserve(const Config &config) {
-    order_index_.reserve(config.max_orders);
+    order_index_.reserve(config.reserve_orders);
 }
 
 AddStatus MapListOrderBook::validate_new_order(const NewOrder &order) const noexcept {
@@ -331,7 +385,7 @@ AddStatus MapListOrderBook::validate_new_replace_order(const NewOrder &order,
         return AddStatus::DuplicateOrderId;
     }
 
-    if (order.time_in_force == TimeInForce::Fok && !can_fully_fill(order)) {
+    if (order.time_in_force == TimeInForce::Fok && !can_fully_fill(order, id)) {
         return AddStatus::WouldNotFullyFill;
     }
 
@@ -339,8 +393,6 @@ AddStatus MapListOrderBook::validate_new_replace_order(const NewOrder &order,
 }
 
 AddResult MapListOrderBook::add_validated_order(const NewOrder &order, TradeWriter &trade_writer) {
-    Quantity remaining_quantity = order.quantity;
-
     if (order.side == Side::Buy) {
         return match_and_add(asks_, bids_, order, trade_writer);
     } else {
@@ -348,10 +400,9 @@ AddResult MapListOrderBook::add_validated_order(const NewOrder &order, TradeWrit
     }
 }
 
-template <typename OppositeLevels, typename SameSideLevels>
-AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
-                                          SameSideLevels &same_side_levels, const NewOrder &order,
-                                          TradeWriter &trade_writer) {
+template <typename Levels, typename SameSideLevels>
+AddResult MapListOrderBook::match_and_add(Levels &opposite_levels, SameSideLevels &same_side_levels,
+                                          const NewOrder &order, TradeWriter &trade_writer) {
 
     const auto comparator = opposite_levels.key_comp();
     auto level_it = opposite_levels.begin();
@@ -443,6 +494,9 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
             assert(remaining == Quantity{0});
             break;
         }
+
+        // no level_it++ because we erase the current order, level_it will point to the next order
+        // as a result
     }
 
     AddOutcome outcome = AddOutcome::Filled;
@@ -482,6 +536,9 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
         case TimeInForce::Ioc:
             outcome = AddOutcome::RemainderCancelled;
             break;
+        case TimeInForce::Fok:
+            assert(false && "Validated FOK was not fully consumed.");
+            std::terminate();
         }
     }
 
@@ -493,6 +550,11 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
 
 bool MapListOrderBook::can_fully_fill(const NewOrder &order) const noexcept {
     return order.side == Side::Buy ? can_fill_levels(asks_, order) : can_fill_levels(bids_, order);
+}
+
+bool MapListOrderBook::can_fully_fill(const NewOrder &order, OrderId id) const noexcept {
+    return order.side == Side::Buy ? can_fill_levels(asks_, order, id)
+                                   : can_fill_levels(bids_, order, id);
 }
 
 void MapListOrderBook::erase_resting(OrderIndex::iterator index_it) noexcept {
@@ -507,9 +569,8 @@ void MapListOrderBook::erase_resting(OrderIndex::iterator index_it) noexcept {
     order_index_.erase(index_it);
 }
 
-template <typename OppositeLevels>
-void MapListOrderBook::erase_from_level(OppositeLevels &levels,
-                                        const OrderLocation &location) noexcept {
+template <typename Levels>
+void MapListOrderBook::erase_from_level(Levels &levels, const OrderLocation &location) noexcept {
     const auto level_it = levels.find(location.price);
     assert(level_it != levels.end());
 
