@@ -18,18 +18,20 @@ class TradeWriter;
 
 namespace books {
 
-class MapListOrderBook final {
+template <std::size_t BandWidth> class DenseLadderOrderBook final {
   public:
     struct Config {
+        Price min_price{};
+        Price tick_size{};
         std::uint32_t reserve_orders{};
     };
-    explicit MapListOrderBook(Config config);
+    explicit DenseLadderOrderBook(Config config);
 
-    MapListOrderBook(const MapListOrderBook &) = delete;
-    MapListOrderBook &operator=(const MapListOrderBook &) = delete;
+    DenseLadderOrderBook(const DenseLadderOrderBook &) = delete;
+    DenseLadderOrderBook &operator=(const DenseLadderOrderBook &) = delete;
 
-    MapListOrderBook(MapListOrderBook &&) = delete;
-    MapListOrderBook &operator=(MapListOrderBook &&) = delete;
+    DenseLadderOrderBook(DenseLadderOrderBook &&) = delete;
+    DenseLadderOrderBook &operator=(DenseLadderOrderBook &&) = delete;
 
     [[nodiscard]] AddResult add_order(const NewOrder &order, TradeWriter &trade_writer);
     [[nodiscard]] CancelResult cancel_order(OrderId id) noexcept;
@@ -58,6 +60,27 @@ class MapListOrderBook final {
     void reset() noexcept;
 
   private:
+    static constexpr std::uint32_t invalid_index = std::numeric_limits<std::uint32_t>::max();
+
+    struct RestingOrderNode {
+        OrderId id;
+        Quantity quantity;
+        StpId stp_id;
+        TimeInForce time_in_force;
+
+        std::uint32_t prev{invalid_index};
+        std::uint32_t next{invalid_index};
+    }
+
+    struct Level {
+        Quantity quantity;
+        std::uint32_t head;
+        std::uint32_t tail;
+    }
+
+    std::array<Level, BandWidth>
+        bids_;
+    std::array<Level, BandWidth> asks_;
 };
 
 } // namespace books

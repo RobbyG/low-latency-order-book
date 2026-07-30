@@ -54,12 +54,4 @@ static_assert(sizeof(NewOrder) == 32, "NewOrder must be 32 bytes in size");
 static_assert(std::is_trivially_copyable_v<NewOrder>,
               "NewOrder must be trivially copyable for buffer ring usage");
 
-struct RestingOrder {
-    OrderId id;
-    Quantity quantity;
-    StpId stp_id;
-    TimeInForce time_in_force;
-};
-static_assert(sizeof(RestingOrder) == 24, "RestingOrder must be 24 bytes in size");
-
 } // namespace lob

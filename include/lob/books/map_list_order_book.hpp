@@ -58,6 +58,14 @@ class MapListOrderBook final {
     void reset() noexcept;
 
   private:
+    struct RestingOrder {
+        OrderId id;
+        Quantity quantity;
+        StpId stp_id;
+        TimeInForce time_in_force;
+    };
+    static_assert(sizeof(RestingOrder) == 24, "RestingOrder must be 24 bytes in size");
+
     using OrderList = std::pmr::list<RestingOrder>;
     using BidLevels = std::pmr::map<Price, OrderList, std::greater<Price>>;
     using AskLevels = std::pmr::map<Price, OrderList, std::less<Price>>;

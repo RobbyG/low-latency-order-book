@@ -169,8 +169,8 @@ template <typename Levels>
 }
 
 template <typename Levels>
-[[nodiscard]] CopyResult copy_orders_from(const Levels &levels, Side side,
-                                          std::span<OrderView> out) noexcept {
+[[nodiscard]] CopyResult copy_best_orders_from(const Levels &levels, Side side,
+                                               std::span<OrderView> out) noexcept {
     std::uint32_t copied = 0;
     auto level_it = levels.begin();
 
