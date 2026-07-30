@@ -168,6 +168,40 @@ template <typename Levels>
     };
 }
 
+template <typename Levels>
+[[nodiscard]] CopyResult copy_orders_from(const Levels &levels, Side side,
+                                          std::span<OrderView> out) noexcept {
+    std::uint32_t copied = 0;
+    auto level_it = levels.begin();
+
+    if (level_it == levels.end()) {
+        return CopyResult{
+            .written = 0,
+            .available = 0,
+        };
+    }
+
+    const auto &orders = level_it->second;
+
+    for (const auto &order : orders) {
+        if (copied == out.size()) {
+            break;
+        }
+
+        out[copied++] = OrderView{.id = order.id,
+                                  .price = level_it->first,
+                                  .quantity = order.quantity,
+                                  .stp_id = order.stp_id,
+                                  .side = side,
+                                  .time_in_force = order.time_in_force};
+    }
+
+    return CopyResult{
+        .written = copied,
+        .available = static_cast<std::uint32_t>(orders.size()),
+    };
+}
+
 } // namespace
 
 // construction
@@ -537,6 +571,11 @@ AddResult MapListOrderBook::match_and_add(Levels &opposite_levels, SameSideLevel
             outcome = AddOutcome::RemainderCancelled;
             break;
         case TimeInForce::Fok:
+            // unreachable: validate_new_order / validate_new_replace_order gate FOK on
+            // can_fully_fill
+            // reaching here means the two have diverged
+            // trades are already published and the book is already mutated, so
+            // there is no recovery
             assert(false && "Validated FOK was not fully consumed.");
             std::terminate();
         }
