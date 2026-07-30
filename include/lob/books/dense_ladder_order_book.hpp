@@ -70,16 +70,15 @@ template <std::size_t BandWidth> class DenseLadderOrderBook final {
 
         std::uint32_t prev{invalid_index};
         std::uint32_t next{invalid_index};
-    }
+    };
 
     struct Level {
         Quantity quantity;
         std::uint32_t head;
         std::uint32_t tail;
-    }
+    };
 
-    std::array<Level, BandWidth>
-        bids_;
+    std::array<Level, BandWidth> bids_;
     std::array<Level, BandWidth> asks_;
 };
 
