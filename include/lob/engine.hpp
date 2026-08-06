@@ -2,6 +2,7 @@
 
 #include <lob/books/order_book_concept.hpp>
 #include <lob/command.hpp>
+#include <lob/instrument.hpp>
 #include <lob/rings_config.hpp>
 #include <lob/spsc_ring.hpp>
 #include <lob/trade_writer.hpp>

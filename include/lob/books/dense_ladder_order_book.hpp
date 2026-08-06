@@ -4,13 +4,14 @@
 #include <lob/order.hpp>
 #include <lob/order_book_results.hpp>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <list>
+#include <limits>
 #include <map>
-#include <memory_resource>
 #include <span>
-#include <unordered_map>
+#include <vector>
 
 namespace lob {
 
@@ -19,10 +20,10 @@ class TradeWriter;
 namespace books {
 
 template <std::size_t BandWidth> class DenseLadderOrderBook final {
+
   public:
     struct Config {
-        Price min_price{};
-        Price tick_size{};
+        Price base{};
         std::uint32_t reserve_orders{};
     };
     explicit DenseLadderOrderBook(Config config);
@@ -61,6 +62,29 @@ template <std::size_t BandWidth> class DenseLadderOrderBook final {
 
   private:
     static constexpr std::uint32_t invalid_index = std::numeric_limits<std::uint32_t>::max();
+    static_assert(BandWidth > 0 && BandWidth <= invalid_index,
+                  "BandWidth must be positive and within limits");
+
+    Price base_;
+
+    struct Level {
+        Quantity total_quantity{};
+        std::uint32_t head{invalid_index};
+        std::uint32_t tail{invalid_index};
+    };
+    static_assert(sizeof(Level) == 16, "Level must be 16 bytes in size");
+
+    std::array<Level, BandWidth> bids_{};
+    std::array<Level, BandWidth> asks_{};
+
+    std::array<std::uint64_t, (BandWidth + 63) / 64> bid_occupied_{};
+    std::array<std::uint64_t, (BandWidth + 63) / 64> ask_occupied_{};
+
+    std::uint32_t best_bid_index_{invalid_index};
+    std::uint32_t best_ask_index_{invalid_index};
+
+    std::vector<std::pair<Price, Level>> overflow_bids_;
+    std::vector<std::pair<Price, Level>> overflow_asks_;
 
     struct RestingOrderNode {
         OrderId id;
@@ -71,15 +95,21 @@ template <std::size_t BandWidth> class DenseLadderOrderBook final {
         std::uint32_t prev{invalid_index};
         std::uint32_t next{invalid_index};
     };
+    static_assert(sizeof(RestingOrderNode) == 32, "RestingOrderNode must be 32 bytes in size");
 
-    struct Level {
-        Quantity quantity;
-        std::uint32_t head;
-        std::uint32_t tail;
+    std::vector<RestingOrderNode> order_pool_{};
+    std::uint32_t resting_pool_head_{invalid_index};
+
+    struct IdEntry {
+        OrderId id{};
+        Price price{};
+        std::uint32_t node_index{invalid_index};
+        Side side;
     };
+    static_assert(sizeof(IdEntry) == 24, "IdEntry must be 24 bytes in size");
 
-    std::array<Level, BandWidth> bids_;
-    std::array<Level, BandWidth> asks_;
+    std::vector<IdEntry> id_index_;
+    std::size_t id_index_mask_{0};
 };
 
 } // namespace books
