@@ -9,8 +9,8 @@ namespace lob::books {
 
 namespace {
 
-template <typename Levels>
-[[nodiscard]] bool can_fill_levels(const Levels &levels, const NewOrder &order) noexcept {
+template <typename OppositeLevels>
+[[nodiscard]] bool can_fill_levels(const OppositeLevels &levels, const NewOrder &order) noexcept {
     const auto comparator = levels.key_comp();
     const bool is_limit = order.order_type == OrderType::Limit;
     const bool stp_active = order.stp_id != StpId{0};
@@ -48,8 +48,8 @@ template <typename Levels>
     return false;
 }
 
-template <typename Levels>
-[[nodiscard]] bool can_fill_levels(const Levels &levels, const NewOrder &order,
+template <typename OppositeLevels>
+[[nodiscard]] bool can_fill_levels(const OppositeLevels &levels, const NewOrder &order,
                                    OrderId id) noexcept {
     const auto comparator = levels.key_comp();
     const bool is_limit = order.order_type == OrderType::Limit;
@@ -91,8 +91,9 @@ template <typename Levels>
     return false;
 }
 
-template <typename Levels>
-[[nodiscard]] bool best_price_quantity_from(const Levels &levels, PriceQuantity &pq) noexcept {
+template <typename OppositeLevels>
+[[nodiscard]] bool best_price_quantity_from(const OppositeLevels &levels,
+                                            PriceQuantity &pq) noexcept {
     if (levels.empty())
         return false;
 
@@ -106,8 +107,9 @@ template <typename Levels>
     return true;
 }
 
-template <typename Levels>
-[[nodiscard]] CopyResult copy_depth_from(const Levels &levels, std::span<PriceLevel> out) noexcept {
+template <typename OppositeLevels>
+[[nodiscard]] CopyResult copy_depth_from(const OppositeLevels &levels,
+                                         std::span<PriceLevel> out) noexcept {
 
     std::uint32_t copied = 0;
 
@@ -134,8 +136,8 @@ template <typename Levels>
     };
 }
 
-template <typename Levels>
-[[nodiscard]] CopyResult copy_orders_from(const Levels &levels, Side side, Price price,
+template <typename OppositeLevels>
+[[nodiscard]] CopyResult copy_orders_from(const OppositeLevels &levels, Side side, Price price,
                                           std::span<OrderView> out) noexcept {
     std::uint32_t copied = 0;
     auto level_it = levels.find(price);
@@ -168,8 +170,8 @@ template <typename Levels>
     };
 }
 
-template <typename Levels>
-[[nodiscard]] CopyResult copy_best_orders_from(const Levels &levels, Side side,
+template <typename OppositeLevels>
+[[nodiscard]] CopyResult copy_best_orders_from(const OppositeLevels &levels, Side side,
                                                std::span<OrderView> out) noexcept {
     std::uint32_t copied = 0;
     auto level_it = levels.begin();
@@ -434,9 +436,10 @@ AddResult MapListOrderBook::add_validated_order(const NewOrder &order, TradeWrit
     }
 }
 
-template <typename Levels, typename SameSideLevels>
-AddResult MapListOrderBook::match_and_add(Levels &opposite_levels, SameSideLevels &same_side_levels,
-                                          const NewOrder &order, TradeWriter &trade_writer) {
+template <typename OppositeLevels, typename SameSideLevels>
+AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
+                                          SameSideLevels &same_side_levels, const NewOrder &order,
+                                          TradeWriter &trade_writer) {
 
     const auto comparator = opposite_levels.key_comp();
     auto level_it = opposite_levels.begin();
@@ -608,8 +611,9 @@ void MapListOrderBook::erase_resting(OrderIndex::iterator index_it) noexcept {
     order_index_.erase(index_it);
 }
 
-template <typename Levels>
-void MapListOrderBook::erase_from_level(Levels &levels, const OrderLocation &location) noexcept {
+template <typename OppositeLevels>
+void MapListOrderBook::erase_from_level(OppositeLevels &levels,
+                                        const OrderLocation &location) noexcept {
     const auto level_it = levels.find(location.price);
     assert(level_it != levels.end());
 

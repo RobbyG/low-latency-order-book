@@ -58,13 +58,19 @@ class MapListOrderBook final {
     void reset() noexcept;
 
   private:
+  private:
+    static constexpr std::pmr::pool_options kPoolOptions{
+        .max_blocks_per_chunk = 4096,
+        .largest_required_pool_block = 128,
+    };
+
     struct RestingOrder {
         OrderId id;
         Quantity quantity;
         StpId stp_id;
         TimeInForce time_in_force;
     };
-    static_assert(sizeof(RestingOrder) == 24, "RestingOrder must be 24 bytes in size");
+    static_assert(sizeof(RestingOrder) == 24 && "RestingOrder must be 24 bytes in size");
 
     using OrderList = std::pmr::list<RestingOrder>;
     using BidLevels = std::pmr::map<Price, OrderList, std::greater<Price>>;
@@ -78,35 +84,36 @@ class MapListOrderBook final {
 
     using OrderIndex = std::pmr::unordered_map<OrderId, OrderLocation>;
 
-    void reserve(const Config &config);
-
-    [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
-    [[nodiscard]] AddStatus validate_new_replace_order(const NewOrder &order,
-                                                       OrderId id) const noexcept;
-    [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
-    template <typename Levels, typename SameSideLevels>
-    [[nodiscard]] AddResult match_and_add(Levels &opposite_levels, SameSideLevels &same_side_levels,
-                                          const NewOrder &order, TradeWriter &trade_writer);
-
-    [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
-    bool MapListOrderBook::can_fully_fill(const NewOrder &order, OrderId id) const noexcept;
-    void erase_resting(OrderIndex::iterator index_it) noexcept;
-    template <typename Levels>
-    void erase_from_level(Levels &levels, const OrderLocation &location) noexcept;
-
     Config config_;
 
-    // TODO: change values from hardcoded
-    static constexpr std::pmr::pool_options kPoolOptions{
-        .max_blocks_per_chunk = 4096,
-        .largest_required_pool_block = 128,
-    };
     std::pmr::unsynchronized_pool_resource pool_{kPoolOptions};
 
     BidLevels bids_{&pool_};
     AskLevels asks_{&pool_};
-
     OrderIndex order_index_{&pool_};
+
+    void reserve(const Config &config);
+
+    [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
+
+    [[nodiscard]] AddStatus validate_new_replace_order(const NewOrder &order,
+                                                       OrderId id) const noexcept;
+
+    [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
+
+    template <typename OppositeLevels, typename SameSideLevels>
+    [[nodiscard]] AddResult match_and_add(OppositeLevels &opposite_levels,
+                                          SameSideLevels &same_side_levels, const NewOrder &order,
+                                          TradeWriter &trade_writer);
+
+    [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
+
+    [[nodiscard]] bool can_fully_fill(const NewOrder &order, OrderId id) const noexcept;
+
+    void erase_resting(OrderIndex::iterator index_it) noexcept;
+
+    template <typename Levels>
+    void erase_from_level(Levels &levels, const OrderLocation &location) noexcept;
 };
 
 } // namespace books
