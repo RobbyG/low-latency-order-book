@@ -22,6 +22,8 @@ template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 void DenseLadderOrderBook<BandWidth, Hash>::reserve(const Config &config) {
     order_pool.reserve(config.reserve_orders);
 
+    base_price_ = config.base;
+
     std::size_t hash_slots =
         std::max<std::size_t>(2, static_cast<std::size_t>(config.reserve_orders * 2));
     hash_slots = std::bit_ceil(hash_slots);
@@ -95,39 +97,210 @@ DenseLadderOrderBook<BandWidth, Hash>::previous_occupied_slot(const auto &occupi
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 std::size_t DenseLadderOrderBook<BandWidth, Hash>::next_occupied_slot(const auto &occupied,
-                                                                      std::size_t slot) noexcept {}
+                                                                      std::size_t slot) noexcept {
+    if (slot == BandWidth - 1)
+        return invalid_index;
+
+    std::size_t word_index = slot >> 6;
+    const unsigned bit_index = static_cast<unsigned>(slot & 63);
+
+    std::uint64_t word = occupied[word_index] & ((~std::uint64_t{0} << bit_index) << 1);
+
+    if (word != 0) {
+        return (word_index << 6) + std::countr_zero(word);
+    }
+
+    while (++word_index < occupied.size()) {
+        word = occupied[word_index];
+
+        if (word != 0) {
+            return (word_index << 6) + std::countr_zero(word);
+        }
+    }
+
+    return invalid_index;
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
+bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &order,
+                                                            OrderId excluded_id) const noexcept {
+    Quantity remaining = order.quantity;
+    const std::size_t limit_slot = static_cast<std::size_t>(order.price - base_price_);
+
+    if constexpr (OppositeSide == Side::Buy) {
+        std::size_t slot = best_bid_slot_;
+
+        std::uint32_t excluded_node = invalid_index;
+        std::size_t excluded_slot = invalid_index;
+        Quantity excluded_quantity{};
+
+        if constexpr (ExcludeOrder) {
+            const IdEntry &entry = order_index_[find_id_entry(excluded_id)];
+
+            if (entry.side == OppositeSide) {
+                excluded_node = entry.node_index;
+                excluded_slot = static_cast<std::size_t>(entry.price - base_price_);
+                excluded_quantity = order_pool_[entry.node_index].quantity;
+            }
+        }
+
+        if constexpr (StpActive) {
+            const StpId stp_id = order.stp_id;
+            const SelfTradeResolve stp_policy = order.self_trade_resolve;
+
+            while (slot != invalid_index && slot >= limit_slot) {
+                std::uint32_t node = bids_[slot].head;
+
+                while (node != invalid_index) {
+                    const RestingOrderNode &resting = order_pool_[node];
+                    const std::uint32_t next = resting.next;
+
+                    if constexpr (ExcludeOrder) {
+                        if (node == excluded_node) {
+                            node = next;
+                            continue;
+                        }
+                    }
+
+                    if (resting.stp_id == stp_id) {
+                        switch (stp_policy) {
+                        case SelfTradeResolve::CancelNew:
+                        case SelfTradeResolve::CancelBoth:
+                            return false;
+
+                        case SelfTradeResolve::CancelResting:
+                            node = next;
+                            continue;
+
+                        case SelfTradeResolve::DecrementAndCancel:
+                            break;
+                        }
+                    }
+
+                    if (resting.quantity >= remaining)
+                        return true;
+
+                    remaining -= resting.quantity;
+                    node = next;
+                }
+
+                slot = previous_occupied_slot(bids_occupied_, slot);
+            }
+
+            return false;
+
+        } else {
+            while (slot != invalid_index && slot >= limit_slot) {
+                Quantity available = bids_[slot].total_quantity;
+
+                if constexpr (ExcludeOrder) {
+                    if (slot == excluded_slot)
+                        available -= excluded_quantity;
+                }
+
+                if (available >= remaining)
+                    return true;
+
+                remaining -= available;
+                slot = previous_occupied_slot(bids_occupied_, slot);
+            }
+
+            return false;
+        }
+    } else {
+
+        std::size_t slot = best_ask_slot_;
+
+        std::uint32_t excluded_node = invalid_index;
+        std::size_t excluded_slot = invalid_index;
+        Quantity excluded_quantity{};
+
+        if constexpr (ExcludeOrder) {
+            const IdEntry &entry = order_index_[find_id_entry(excluded_id)];
+
+            if (entry.side == OppositeSide) {
+                excluded_node = entry.node_index;
+                excluded_slot = static_cast<std::size_t>(entry.price - base_price_);
+                excluded_quantity = order_pool_[entry.node_index].quantity;
+            }
+        }
+
+        if constexpr (StpActive) {
+            const StpId stp_id = order.stp_id;
+            const SelfTradeResolve stp_policy = order.self_trade_resolve;
+
+            while (slot != invalid_index && slot <= limit_slot) {
+                std::uint32_t node = asks_[slot].head;
+
+                while (node != invalid_index) {
+                    const RestingOrderNode &resting = order_pool_[node];
+                    const std::uint32_t next = resting.next;
+
+                    if constexpr (ExcludeOrder) {
+                        if (node == excluded_node) {
+                            node = next;
+                            continue;
+                        }
+                    }
+
+                    if (resting.stp_id == stp_id) {
+                        switch (stp_policy) {
+                        case SelfTradeResolve::CancelNew:
+                        case SelfTradeResolve::CancelBoth:
+                            return false;
+
+                        case SelfTradeResolve::CancelResting:
+                            node = next;
+                            continue;
+
+                        case SelfTradeResolve::DecrementAndCancel:
+                            break;
+                        }
+                    }
+
+                    if (resting.quantity >= remaining)
+                        return true;
+
+                    remaining -= resting.quantity;
+                    node = next;
+                }
+
+                slot = next_occupied_slot(asks_occupied_, slot);
+            }
+
+            return false;
+
+        } else {
+            while (slot != invalid_index && slot <= limit_slot) {
+                Quantity available = asks_[slot].total_quantity;
+
+                if constexpr (ExcludeOrder) {
+                    if (slot == excluded_slot)
+                        available -= excluded_quantity;
+                }
+
+                if (available >= remaining)
+                    return true;
+
+                remaining -= available;
+                slot = next_occupied_slot(asks_occupied_, slot);
+            }
+
+            return false;
+        }
+    }
+}
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side OppositeSide, bool ExcludeOrder>
-bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(
-    const NewOrder &order, OrderId excluded_id = {}) const noexcept {
-
-    Quantity remaining = order.quantity;
-
-    if (OppositeSide == Side::Buy) {
-        std::size_t slot = best_bid_slot_;
-
-        while (remaining > 0 && slot >= static_cast<std::size_t>(order.price) &&
-               slot != invalid_index) {
-            if (bids_[slot].total_quantity >= remaining)
-                return true;
-
-            remaining -= bids_[slot].total_quantity;
-        }
-
-        if (remaining > 0)
-            if (slot == invalid_index) {
-                for (const auto &level : bids_overflow_) {
-                    if (level.first < order.price)
-                        return false;
-                    remaining -= level.second;
-
-                    if (remaining <= 0)
-                        return true;
-                }
-            }
-        return true;
+bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &order,
+                                                            OrderId excluded_id) const noexcept {
+    if (order.stp_id == StpId{0}) {
+        return can_fill_levels<OppositeSide, ExcludeOrder, false>(order, excluded_id);
     }
+
+    return can_fill_levels<OppositeSide, ExcludeOrder, true>(order, excluded_id);
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>

@@ -14,6 +14,7 @@ template <typename OppositeLevels>
     const auto comparator = levels.key_comp();
     const bool is_limit = order.order_type == OrderType::Limit;
     const bool stp_active = order.stp_id != StpId{0};
+    const StpId stp_id = order.stp_id;
 
     Quantity quantity_needed = order.quantity;
 
@@ -23,7 +24,7 @@ template <typename OppositeLevels>
         }
 
         for (const auto &resting_order : orders) {
-            if (stp_active && resting_order.stp_id == order.stp_id) {
+            if (stp_active && resting_order.stp_id == stp_id) {
                 switch (order.self_trade_resolve) {
                 case SelfTradeResolve::CancelNew:
                 case SelfTradeResolve::CancelBoth:
@@ -54,6 +55,7 @@ template <typename OppositeLevels>
     const auto comparator = levels.key_comp();
     const bool is_limit = order.order_type == OrderType::Limit;
     const bool stp_active = order.stp_id != StpId{0};
+    const StpId stp_id = order.stp_id;
 
     Quantity quantity_needed = order.quantity;
 
@@ -66,7 +68,7 @@ template <typename OppositeLevels>
             if (resting_order.id == id)
                 continue;
 
-            if (stp_active && resting_order.stp_id == order.stp_id) {
+            if (stp_active && resting_order.stp_id == stp_id) {
                 switch (order.self_trade_resolve) {
                 case SelfTradeResolve::CancelNew:
                 case SelfTradeResolve::CancelBoth:

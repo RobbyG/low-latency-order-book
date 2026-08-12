@@ -100,12 +100,20 @@ class DenseLadderOrderBook final {
 
     Config config_;
 
+    Price base_price_;
+
     Levels bids_{};
     Levels asks_{};
 
+    // these are manually calculated bitmaps basically
+    // each bit represents whether a level is occupied or not
+    // the way it works, is that we increase from left to right, smallest to biggest in the array,
+    // so over std::uint64_t s but within each std::uint64_t we increase from right to left, so the
+    // least significant bit is the smallest level in that word
     Occupancy bids_occupied_{};
     Occupancy asks_occupied_{};
 
+    // prices are normalized to slots
     std::size_t best_bid_slot_{invalid_index};
     std::size_t best_ask_slot_{invalid_index};
 
@@ -141,11 +149,16 @@ class DenseLadderOrderBook final {
     [[nodiscard]] std::size_t next_occupied_slot(const auto &occupied, std::size_t slot) noexcept;
 
     template <Side OppositeSide, bool ExcludeOrder>
+    [[nodiscard]] bool can_fill_levels_no_stp(const NewOrder &order,
+                                              OrderId excluded_id) const noexcept;
+    template <Side OppositeSide, bool ExcludeOrder>
+    [[nodiscard]] bool can_fill_levels_stp(const NewOrder &order,
+                                           OrderId excluded_id) const noexcept;
+    template <Side OppositeSide, bool ExcludeOrder>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order,
                                        OrderId excluded_id = {}) const noexcept;
 
     [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
-
     [[nodiscard]] bool can_fully_fill(const NewOrder &order, OrderId id) const noexcept;
 };
 
