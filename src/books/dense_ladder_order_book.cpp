@@ -20,7 +20,7 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::add_order(const NewOrder &order
 // private functions
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 void DenseLadderOrderBook<BandWidth, Hash>::reserve(const Config &config) {
-    order_pool.reserve(config.reserve_orders);
+    order_pool_.reserve(config.reserve_orders);
 
     base_price_ = config.base;
 
@@ -40,7 +40,7 @@ template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 AddStatus
 DenseLadderOrderBook<BandWidth, Hash>::validate_new_order(const NewOrder &order) const noexcept {
     std::size_t slot = find_id_entry(order.id);
-    if (slot != invalid_slot) {
+    if (slot != invalid_index) {
         return AddStatus::DuplicateOrderId;
     }
 
@@ -53,13 +53,13 @@ DenseLadderOrderBook<BandWidth, Hash>::validate_new_order(const NewOrder &order)
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 const std::size_t DenseLadderOrderBook<BandWidth, Hash>::find_id_entry(OrderId id) const noexcept {
-    std::size_t slot = Hash::hash_into_slot(id, order_index_mask_, )
+    std::size_t slot = Hash::hash_into_slot(id, order_index_mask_, order_index_shift_);
 
-        while (true) {
+    while (true) {
         const IdEntry &entry = order_index_[slot];
 
         if (entry.node_index == invalid_index)
-            return invalid_slot;
+            return invalid_index;
 
         if (entry.id == id)
             return slot;
@@ -71,7 +71,7 @@ const std::size_t DenseLadderOrderBook<BandWidth, Hash>::find_id_entry(OrderId i
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 std::size_t
 DenseLadderOrderBook<BandWidth, Hash>::previous_occupied_slot(const auto &occupied,
-                                                              std::size_t slot) noexcept {
+                                                              std::size_t slot) const noexcept {
     if (slot == 0)
         return invalid_index;
 
@@ -96,8 +96,9 @@ DenseLadderOrderBook<BandWidth, Hash>::previous_occupied_slot(const auto &occupi
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-std::size_t DenseLadderOrderBook<BandWidth, Hash>::next_occupied_slot(const auto &occupied,
-                                                                      std::size_t slot) noexcept {
+std::size_t
+DenseLadderOrderBook<BandWidth, Hash>::next_occupied_slot(const auto &occupied,
+                                                          std::size_t slot) const noexcept {
     if (slot == BandWidth - 1)
         return invalid_index;
 
@@ -126,12 +127,16 @@ template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
 bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &order,
                                                             OrderId excluded_id) const noexcept {
     Quantity remaining = order.quantity;
-    const std::size_t limit_slot = static_cast<std::size_t>(order.price - base_price_);
+    Price new_order_price = order.price;
+    const std::size_t limit_slot = new_order_price >= base_price_
+                                       ? static_cast<std::size_t>(new_order_price - base_price_)
+                                       : 0;
 
     if constexpr (OppositeSide == Side::Buy) {
         std::size_t slot = best_bid_slot_;
 
         std::uint32_t excluded_node = invalid_index;
+        Price excluded_price{0};
         std::size_t excluded_slot = invalid_index;
         Quantity excluded_quantity{};
 
@@ -140,7 +145,9 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &orde
 
             if (entry.side == OppositeSide) {
                 excluded_node = entry.node_index;
-                excluded_slot = static_cast<std::size_t>(entry.price - base_price_);
+                excluded_price = entry.price;
+                if (entry.price >= base_price_)
+                    excluded_slot = static_cast<std::size_t>(entry.price - base_price_);
                 excluded_quantity = order_pool_[entry.node_index].quantity;
             }
         }
@@ -188,6 +195,44 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &orde
                 slot = previous_occupied_slot(bids_occupied_, slot);
             }
 
+            for (auto it = bids_overflow_.begin();
+                 it != bids_overflow_.end() && it->first >= new_order_price; it++) {
+                std::uint32_t node = it->second.head;
+
+                while (node != invalid_index) {
+                    const RestingOrderNode &resting = order_pool_[node];
+                    const std::uint32_t next = resting.next;
+
+                    if constexpr (ExcludeOrder) {
+                        if (node == excluded_node) {
+                            node = next;
+                            continue;
+                        }
+                    }
+
+                    if (resting.stp_id == stp_id) {
+                        switch (stp_policy) {
+                        case SelfTradeResolve::CancelNew:
+                        case SelfTradeResolve::CancelBoth:
+                            return false;
+
+                        case SelfTradeResolve::CancelResting:
+                            node = next;
+                            continue;
+
+                        case SelfTradeResolve::DecrementAndCancel:
+                            break;
+                        }
+                    }
+
+                    if (resting.quantity >= remaining)
+                        return true;
+
+                    remaining -= resting.quantity;
+                    node = next;
+                }
+            }
+
             return false;
 
         } else {
@@ -206,6 +251,21 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &orde
                 slot = previous_occupied_slot(bids_occupied_, slot);
             }
 
+            for (auto it = bids_overflow_.begin();
+                 it != bids_overflow_.end() && it->first >= new_order_price; ++it) {
+                Quantity available = it->second.total_quantity;
+
+                if constexpr (ExcludeOrder) {
+                    if (it->first == excluded_price)
+                        available -= excluded_quantity;
+                }
+
+                if (available >= remaining)
+                    return true;
+
+                remaining -= available;
+            }
+
             return false;
         }
     } else {
@@ -213,6 +273,7 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &orde
         std::size_t slot = best_ask_slot_;
 
         std::uint32_t excluded_node = invalid_index;
+        Price excluded_price{0};
         std::size_t excluded_slot = invalid_index;
         Quantity excluded_quantity{};
 
@@ -221,7 +282,9 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &orde
 
             if (entry.side == OppositeSide) {
                 excluded_node = entry.node_index;
-                excluded_slot = static_cast<std::size_t>(entry.price - base_price_);
+                excluded_price = entry.price;
+                if (entry.price >= base_price_)
+                    excluded_slot = static_cast<std::size_t>(entry.price - base_price_);
                 excluded_quantity = order_pool_[entry.node_index].quantity;
             }
         }
@@ -269,6 +332,44 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &orde
                 slot = next_occupied_slot(asks_occupied_, slot);
             }
 
+            for (auto it = asks_overflow_.begin();
+                 it != asks_overflow_.end() && it->first <= new_order_price; it++) {
+                std::uint32_t node = it->second.head;
+
+                while (node != invalid_index) {
+                    const RestingOrderNode &resting = order_pool_[node];
+                    const std::uint32_t next = resting.next;
+
+                    if constexpr (ExcludeOrder) {
+                        if (node == excluded_node) {
+                            node = next;
+                            continue;
+                        }
+                    }
+
+                    if (resting.stp_id == stp_id) {
+                        switch (stp_policy) {
+                        case SelfTradeResolve::CancelNew:
+                        case SelfTradeResolve::CancelBoth:
+                            return false;
+
+                        case SelfTradeResolve::CancelResting:
+                            node = next;
+                            continue;
+
+                        case SelfTradeResolve::DecrementAndCancel:
+                            break;
+                        }
+                    }
+
+                    if (resting.quantity >= remaining)
+                        return true;
+
+                    remaining -= resting.quantity;
+                    node = next;
+                }
+            }
+
             return false;
 
         } else {
@@ -285,6 +386,21 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &orde
 
                 remaining -= available;
                 slot = next_occupied_slot(asks_occupied_, slot);
+            }
+
+            for (auto it = asks_overflow_.begin();
+                 it != asks_overflow_.end() && it->first <= new_order_price; ++it) {
+                Quantity available = it->second.total_quantity;
+
+                if constexpr (ExcludeOrder) {
+                    if (it->first == excluded_price)
+                        available -= excluded_quantity;
+                }
+
+                if (available >= remaining)
+                    return true;
+
+                remaining -= available;
             }
 
             return false;
@@ -305,8 +421,8 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &orde
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 bool DenseLadderOrderBook<BandWidth, Hash>::can_fully_fill(const NewOrder &order) const noexcept {
-    return order.side == Side::Buy ? can_fill_levels<Side::Sell, false>(order);
-               : can_fill_levels<Side::Buy, false>(order);
+    return order.side == Side::Buy ? can_fill_levels<Side::Sell, false>(order)
+                                   : can_fill_levels<Side::Buy, false>(order);
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>

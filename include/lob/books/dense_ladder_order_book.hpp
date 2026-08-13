@@ -145,15 +145,12 @@ class DenseLadderOrderBook final {
     [[nodiscard]] const std::size_t find_id_entry(OrderId id) const noexcept;
 
     [[nodiscard]] std::size_t previous_occupied_slot(const auto &occupied,
-                                                     std::size_t slot) noexcept;
-    [[nodiscard]] std::size_t next_occupied_slot(const auto &occupied, std::size_t slot) noexcept;
+                                                     std::size_t slot) const noexcept;
+    [[nodiscard]] std::size_t next_occupied_slot(const auto &occupied,
+                                                 std::size_t slot) const noexcept;
 
-    template <Side OppositeSide, bool ExcludeOrder>
-    [[nodiscard]] bool can_fill_levels_no_stp(const NewOrder &order,
-                                              OrderId excluded_id) const noexcept;
-    template <Side OppositeSide, bool ExcludeOrder>
-    [[nodiscard]] bool can_fill_levels_stp(const NewOrder &order,
-                                           OrderId excluded_id) const noexcept;
+    template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
+    [[nodiscard]] bool can_fill_levels(const NewOrder &order, OrderId excluded_id) const noexcept;
     template <Side OppositeSide, bool ExcludeOrder>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order,
                                        OrderId excluded_id = {}) const noexcept;
