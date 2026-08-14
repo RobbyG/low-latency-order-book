@@ -26,7 +26,7 @@ class DenseLadderOrderBook final {
   public:
     struct Config {
         Price base{};
-        std::uint32_t reserve_orders{};
+        std::uint32_t max_orders{};
     };
     explicit DenseLadderOrderBook(Config config);
 
@@ -94,6 +94,18 @@ class DenseLadderOrderBook final {
     };
     static_assert(sizeof(IdEntry) == 24, "IdEntry must be 24 bytes in size");
 
+    struct ExcludedOrder {
+        std::uint32_t node_index{invalid_index};
+        Price price{};
+        Quantity quantity{};
+    };
+
+    enum class FillScan : std::uint8_t {
+        Filled,
+        Exhausted,
+        Aborted,
+    };
+
     using Levels = std::array<Level, BandWidth>;
     using Occupancy = std::array<std::uint64_t, (BandWidth + 63) / 64>;
     using OverflowLevels = std::vector<std::pair<Price, Level>>;
@@ -117,8 +129,8 @@ class DenseLadderOrderBook final {
     std::size_t best_bid_slot_{invalid_index};
     std::size_t best_ask_slot_{invalid_index};
 
-    OverflowLevels bids_overflow_;
-    OverflowLevels asks_overflow_;
+    OverflowLevels bids_better_overflow_, bids_worse_overflow_;
+    OverflowLevels asks_better_overflow_, asks_worse_overflow_;
 
     std::vector<RestingOrderNode> order_pool_;
     std::uint32_t resting_pool_head_{invalid_index};
@@ -142,22 +154,42 @@ class DenseLadderOrderBook final {
                   SameSideOverflowLevels &same_side_overflow_levels, NewOrder &order,
                   TradeWriter &trade_writer);
 
-    [[nodiscard]] const std::size_t find_id_entry(OrderId id) const noexcept;
+    [[nodiscard]] std::size_t probe_slot(OrderId) const noexcept;
+
+    [[nodiscard]] std::size_t find_id_entry(OrderId id) const noexcept;
 
     [[nodiscard]] std::size_t previous_occupied_slot(const auto &occupied,
                                                      std::size_t slot) const noexcept;
     [[nodiscard]] std::size_t next_occupied_slot(const auto &occupied,
                                                  std::size_t slot) const noexcept;
 
+    template <bool ExcludeOrder, bool StpActive>
+    FillScan scan_level(const Level &level, Price level_price, const NewOrder &order,
+                        Quantity &remaining, const ExcludedOrder &excluded) const noexcept;
+
     template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
-    [[nodiscard]] bool can_fill_levels(const NewOrder &order, OrderId excluded_id) const noexcept;
+    [[nodiscard]] FillScan scan_better_overflow(const NewOrder &order, Quantity &remaining,
+                                                const ExcludedOrder &excluded) const noexcept;
+    template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
+    [[nodiscard]] FillScan scan_dense(const NewOrder &order, Quantity &remaining,
+                                      const ExcludedOrder &excluded) const noexcept;
+    template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
+    [[nodiscard]] FillScan scan_worse_overflow(const NewOrder &order, Quantity &remaining,
+                                               const ExcludedOrder &excluded) const noexcept;
+
+    template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
+    [[nodiscard]] bool can_fill_levels(const NewOrder &order,
+                                       std::size_t excluded_slot) const noexcept;
     template <Side OppositeSide, bool ExcludeOrder>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order,
-                                       OrderId excluded_id = {}) const noexcept;
+                                       std::size_t excluded_slot) const noexcept;
 
     [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
-    [[nodiscard]] bool can_fully_fill(const NewOrder &order, OrderId id) const noexcept;
+    [[nodiscard]] bool can_fully_fill(const NewOrder &order,
+                                      std::size_t excluded_slot) const noexcept;
 };
 
 } // namespace books
 } // namespace lob
+
+#include <lob/books/detail/dense_ladder_order_book_impl.hpp>

@@ -21,7 +21,7 @@ namespace books {
 class MapListOrderBook final {
   public:
     struct Config {
-        std::uint32_t reserve_orders{};
+        std::uint32_t max_orders{};
     };
     explicit MapListOrderBook(Config config);
 

@@ -402,7 +402,7 @@ CopyResult MapListOrderBook::copy_orders_at_price(Side side, Price price,
 // private functions
 
 void MapListOrderBook::reserve(const Config &config) {
-    order_index_.reserve(config.reserve_orders);
+    order_index_.reserve(config.max_orders);
 }
 
 AddStatus MapListOrderBook::validate_new_order(const NewOrder &order) const noexcept {
