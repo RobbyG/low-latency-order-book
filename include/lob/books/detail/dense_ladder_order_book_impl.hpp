@@ -1,3 +1,5 @@
+// Included by <lob/books/dense_ladder_order_book.hpp>. Do not include directly.
+
 #pragma once
 
 #include <lob/books/dense_ladder_order_book.hpp>
@@ -17,7 +19,19 @@ DenseLadderOrderBook<BandWidth, Hash>::DenseLadderOrderBook(Config config) : con
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 AddResult DenseLadderOrderBook<BandWidth, Hash>::add_order(const NewOrder &order,
-                                                           TradeWriter &trade_writer) {}
+                                                           TradeWriter &trade_writer) {
+    assert(order.quantity != Quantity{0} && "Order cannot have a quantity of 0");
+
+    AddStatus status = validate_new_order(order);
+    if (status != AddStatus::Accepted) {
+        return AddResult{.remaining = order.quantity,
+                         .trade_count = 0,
+                         .status = status,
+                         .outcome = AddOutcome::None};
+    }
+
+    return add_validated_order(order, trade_writer);
+}
 
 // private functions
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
@@ -52,6 +66,206 @@ DenseLadderOrderBook<BandWidth, Hash>::validate_new_order(const NewOrder &order)
 
     return AddStatus::Accepted;
 }
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+AddResult DenseLadderOrderBook<BandWidth, Hash>::add_validated_order(const NewOrder &order,
+                                                                     TradeWriter &trade_writer) {
+    if (order.side == Side::Buy)
+        return match_and_add<Side::Buy>(order, trade_writer);
+    else
+        return match_and_add<Side::Sell>(order, trade_writer);
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side SameSide, bool StpActive>
+auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &remaining,
+                                                        Price level_price, NewOrder &order,
+                                                        TradeWriter &trade_writer) -> FillScan {
+    // TODO
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side SameSide, bool StpActive>
+auto DenseLadderOrderBook<BandWidth, Hash>::match_better_overflow(Quantity &remaining,
+                                                                  NewOrder &order,
+                                                                  TradeWriter &trade_writer)
+    -> FillScan {
+
+    const Price order_price = order.price;
+
+    if constexpr (SameSide == Side::Buy) {
+        for (auto it = asks_better_overflow_.begin(); it != asks_better_overflow_.end();) {
+
+            auto &[price, level] = *it;
+
+            if (order_price < price)
+                break;
+
+            const FillScan result =
+                match_level<SameSide, StpActive>(level, remaining, price, order, trade_writer);
+
+            if (level.head == invalid_index)
+                it = asks_better_overflow_.erase(it);
+            else
+                ++it;
+
+            if (result != FillScan::Exhausted)
+                return result;
+        }
+
+    } else {
+        for (auto it = bids_better_overflow_.begin(); it != bids_better_overflow_.end();) {
+
+            auto &[price, level] = *it;
+
+            if (order_price > price)
+                break;
+
+            const FillScan result =
+                match_level<SameSide, StpActive>(level, remaining, price, order, trade_writer);
+
+            if (level.head == invalid_index)
+                it = bids_better_overflow_.erase(it);
+            else
+                ++it;
+
+            if (result != FillScan::Exhausted)
+                return result;
+        }
+    }
+
+    return FillScan::Exhausted;
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side SameSide, bool StpActive>
+auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, NewOrder &order,
+                                                        TradeWriter &trade_writer) -> FillScan {
+
+    const Price order_price = order.price;
+
+    if constexpr (SameSide == Side::Buy) {
+        if (order_price < base_price_)
+            return FillScan::Exhausted;
+
+        std::size_t slot = best_ask_slot_;
+        const std::size_t limit = static_cast<std::size_t>(order_price - base_price_);
+
+        while (slot != invalid_index && slot <= limit) {
+            const FillScan result = match_level<SameSide, StpActive>(
+                asks_[slot], remaining, base_price_ + slot, order, trade_writer);
+
+            if (asks_[slot].head == invalid_index) {
+                asks_occupied_[slot >> 6] &= ~(std::uint64_t{1} << (slot & 63));
+
+                const std::size_t next = next_occupied_slot(asks_occupied_, slot);
+
+                if (slot == best_ask_slot_)
+                    best_ask_slot_ = next;
+
+                slot = next;
+            } else {
+                if (result != FillScan::Exhausted)
+                    return result;
+
+                slot = next_occupied_slot(asks_occupied_, slot);
+            }
+
+            if (result != FillScan::Exhausted)
+                return result;
+        }
+
+    } else {
+        std::size_t slot = best_bid_slot_;
+
+        const std::size_t limit =
+            order_price < base_price_ ? 0 : static_cast<std::size_t>(order_price - base_price_);
+
+        while (slot != invalid_index && slot >= limit) {
+            const FillScan result = match_level<SameSide, StpActive>(
+                bids_[slot], remaining, base_price_ + slot, order, trade_writer);
+
+            if (bids_[slot].head == invalid_index) {
+                bids_occupied_[slot >> 6] &= ~(std::uint64_t{1} << (slot & 63));
+
+                const std::size_t previous = previous_occupied_slot(bids_occupied_, slot);
+
+                if (slot == best_bid_slot_)
+                    best_bid_slot_ = previous;
+
+                slot = previous;
+            } else {
+                if (result != FillScan::Exhausted)
+                    return result;
+
+                slot = previous_occupied_slot(bids_occupied_, slot);
+            }
+
+            if (result != FillScan::Exhausted)
+                return result;
+        }
+    }
+
+    return FillScan::Exhausted;
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side SameSide, bool StpActive>
+auto DenseLadderOrderBook<BandWidth, Hash>::match_worse_overflow(Quantity &remaining,
+                                                                 NewOrder &order,
+                                                                 TradeWriter &trade_writer)
+    -> FillScan {
+
+    const Price order_price = order.price;
+
+    if constexpr (SameSide == Side::Buy) {
+        for (auto it = asks_worse_overflow_.begin(); it != asks_worse_overflow_.end();) {
+
+            auto &[price, level] = *it;
+
+            if (order_price < price)
+                break;
+
+            const FillScan result =
+                match_level<SameSide, StpActive>(level, remaining, price, order, trade_writer);
+
+            if (level.head == invalid_index)
+                it = asks_worse_overflow_.erase(it);
+            else
+                ++it;
+
+            if (result != FillScan::Exhausted)
+                return result;
+        }
+
+    } else {
+        for (auto it = bids_worse_overflow_.begin(); it != bids_worse_overflow_.end();) {
+
+            auto &[price, level] = *it;
+
+            if (order_price > price)
+                break;
+
+            const FillScan result =
+                match_level<SameSide, StpActive>(level, remaining, price, order, trade_writer);
+
+            if (level.head == invalid_index)
+                it = bids_worse_overflow_.erase(it);
+            else
+                ++it;
+
+            if (result != FillScan::Exhausted)
+                return result;
+        }
+    }
+
+    return FillScan::Exhausted;
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side SameSide>
+AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(NewOrder &order,
+                                                               TradeWriter &trade_writer) {}
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 std::size_t DenseLadderOrderBook<BandWidth, Hash>::probe_slot(OrderId id) const noexcept {
@@ -300,11 +514,11 @@ template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
 bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(
     const NewOrder &order, std::size_t excluded_slot) const noexcept {
     Quantity remaining = order.quantity;
-    std::uint32_t node;
-
     ExcludedOrder excluded{.node_index = invalid_index, .price = Price{}, .quantity = Quantity{}};
 
     if constexpr (ExcludeOrder) {
+        assert(excluded_slot < order_index_.size() &&
+               "excluded_slot must be a valid index into order_index_");
         const IdEntry &entry = order_index_[excluded_slot];
 
         if (entry.side == OppositeSide) {
@@ -312,6 +526,8 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(
             excluded.price = entry.price;
             excluded.quantity = order_pool_[entry.node_index].quantity;
         }
+        // if we have the excluded order on the wrong side, just mark it with node index
+        // invalid_index and quantity 0
     }
 
     FillScan result =
@@ -337,27 +553,27 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-template <Side OppositeSide, bool ExcludeOrder>
-bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(
-    const NewOrder &order, std::size_t excluded_slot) const noexcept {
-    if (order.stp_id == StpId{0}) {
-        return can_fill_levels<OppositeSide, ExcludeOrder, false>(order, excluded_slot);
-    }
-
-    return can_fill_levels<OppositeSide, ExcludeOrder, true>(order, excluded_slot);
-}
-
-template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 bool DenseLadderOrderBook<BandWidth, Hash>::can_fully_fill(const NewOrder &order) const noexcept {
-    return order.side == Side::Buy ? can_fill_levels<Side::Sell, false>(order)
-                                   : can_fill_levels<Side::Buy, false>(order);
+    if (order.side == Side::Buy)
+        return order.stp_id != StpId{0} ? can_fill_levels<Side::Sell, false, true>(order)
+                                        : can_fill_levels<Side::Sell, false, false>(order);
+    else
+        return order.stp_id != StpId{0} ? can_fill_levels<Side::Buy, false, true>(order)
+                                        : can_fill_levels<Side::Buy, false, false>(order);
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 bool DenseLadderOrderBook<BandWidth, Hash>::can_fully_fill(
     const NewOrder &order, std::size_t excluded_slot) const noexcept {
-    return order.side == Side::Buy ? can_fill_levels<Side::Sell, true>(order, excluded_slot)
-                                   : can_fill_levels<Side::Buy, true>(order, excluded_slot);
+
+    if (order.side == Side::Buy)
+        return order.stp_id != StpId{0}
+                   ? can_fill_levels<Side::Sell, true, true>(order, excluded_slot)
+                   : can_fill_levels<Side::Sell, true, false>(order, excluded_slot);
+    else
+        return order.stp_id != StpId{0}
+                   ? can_fill_levels<Side::Buy, true, true>(order, excluded_slot)
+                   : can_fill_levels<Side::Buy, true, false>(order, excluded_slot);
 }
 
 } // namespace lob::books

@@ -145,14 +145,24 @@ class DenseLadderOrderBook final {
 
     [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
 
-    template <typename OppositeLevels, typename OppositeOccupancy, typename OppositeOverflowLevels,
-              typename SameSideLevels, typename SameSideOccupancy, typename SameSideOverflowLevels>
-    [[nodiscard]] AddResult
-    match_and_add(OppositeLevels &opposite_levels, OppositeOccupancy &opposite_occupancy,
-                  OppositeOverflowLevels &opposite_overflow_levels,
-                  SameSideLevels &same_side_levels, SameSideOccupancy &same_side_occupancy,
-                  SameSideOverflowLevels &same_side_overflow_levels, NewOrder &order,
-                  TradeWriter &trade_writer);
+    template <Side SameSide, bool StpActive>
+    [[nodiscard]] FillScan match_level(Level &level, Quantity &remaining, Price level_price,
+                                       NewOrder &order, TradeWriter &trade_writer);
+
+    template <Side SameSide, bool StpActive>
+    [[nodiscard]] FillScan match_better_overflow(Quantity &remaining, NewOrder &order,
+                                                 TradeWriter &trade_writer);
+
+    template <Side SameSide, bool StpActive>
+    [[nodiscard]] FillScan match_dense(Quantity &remaining, NewOrder &order,
+                                       TradeWriter &trade_writer);
+
+    template <Side SameSide, bool StpActive>
+    [[nodiscard]] FillScan match_worse_overflow(Quantity &remaining, NewOrder &order,
+                                                TradeWriter &trade_writer);
+
+    template <Side SameSide>
+    [[nodiscard]] AddResult match_and_add(NewOrder &order, TradeWriter &trade_writer);
 
     [[nodiscard]] std::size_t probe_slot(OrderId) const noexcept;
 

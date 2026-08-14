@@ -216,7 +216,7 @@ MapListOrderBook::MapListOrderBook(Config config) : config_(config) {
 // core mutation api
 
 AddResult MapListOrderBook::add_order(const NewOrder &order, TradeWriter &trade_writer) {
-    assert(order.quantity != Quantity{0});
+    assert(order.quantity != Quantity{0} && "Order cannot have a quantity of 0");
 
     const AddStatus status = validate_new_order(order);
     if (status != AddStatus::Accepted) {
