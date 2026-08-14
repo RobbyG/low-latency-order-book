@@ -300,24 +300,34 @@ template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
 bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(
     const NewOrder &order, std::size_t excluded_slot) const noexcept {
     Quantity remaining = order.quantity;
-    std::uint32_t node = find_id_entry(order.id);
+    std::uint32_t node;
 
-    FillScan result = scan_better_overflow<OppositeSide, ExcludeOrder, StpActive>(
-        order, remaining, ExcludedOrder{.node_index = invalid_index});
+    ExcludedOrder excluded{.node_index = invalid_index, .price = Price{}, .quantity = Quantity{}};
+
+    if constexpr (ExcludeOrder) {
+        const IdEntry &entry = order_index_[excluded_slot];
+
+        if (entry.side == OppositeSide) {
+            excluded.node_index = entry.node_index;
+            excluded.price = entry.price;
+            excluded.quantity = order_pool_[entry.node_index].quantity;
+        }
+    }
+
+    FillScan result =
+        scan_better_overflow<OppositeSide, ExcludeOrder, StpActive>(order, remaining, excluded);
     if (result == FillScan::Aborted)
         return false;
     if (result == FillScan::Filled)
         return true;
 
-    result = scan_dense<OppositeSide, ExcludeOrder, StpActive>(
-        order, remaining, ExcludedOrder{.node_index = invalid_index});
+    result = scan_dense<OppositeSide, ExcludeOrder, StpActive>(order, remaining, excluded);
     if (result == FillScan::Aborted)
         return false;
     if (result == FillScan::Filled)
         return true;
 
-    result = scan_worse_overflow<OppositeSide, ExcludeOrder, StpActive>(
-        order, remaining, ExcludedOrder{.node_index = invalid_index});
+    result = scan_worse_overflow<OppositeSide, ExcludeOrder, StpActive>(order, remaining, excluded);
     if (result == FillScan::Aborted)
         return false;
     if (result == FillScan::Filled)
