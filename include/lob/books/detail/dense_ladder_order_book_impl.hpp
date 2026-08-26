@@ -81,7 +81,46 @@ template <Side SameSide, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &remaining,
                                                         Price level_price, NewOrder &order,
                                                         TradeWriter &trade_writer) -> FillScan {
-    // TODO
+    if constexpr (SameSide == Side::Buy) {
+        if (level.head == invalid_index)
+            return FillScan::Exhausted;
+
+        std::uint32_t current = level.head;
+        RestingOrderNode previous_node = RestingOrderNode{.id = -1}
+
+        while (current != invalid_index && remaining > 0) {
+            RestingOrderNode current_node = order_pool_[current];
+
+            if constexpr (StpActive) {
+                if (current_node.stp_id == order.stp_id) {
+                    switch (order.self_trade_resolve) {
+
+                    case SelfTradeResolve::CancelBoth:
+                    case SelfTradeResolve::CancelNew:
+                        return FillScan::Aborted;
+
+                    case SelfTradeResolve::CancelResting:
+                        if (previous_node.id == -1) {
+
+                            level.head = current_node.next;
+
+                            if (current_node.next != invalid_index)
+                                order_pool_[current_node.next].prev = invalid_index;
+
+                            current = current_node.next;
+                            continue;
+
+                        } else {
+
+                            previous_node.next = order_pool_[current_node.next];
+                            if (current_node.next != invalid_index)
+                                order_pool_[current_node.next].prev = invalid_index;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
@@ -143,17 +182,18 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, New
                                                         TradeWriter &trade_writer) -> FillScan {
 
     const Price order_price = order.price;
+    const Price base_price_local = base_price_;
 
     if constexpr (SameSide == Side::Buy) {
-        if (order_price < base_price_)
+        if (order_price < base_price_local)
             return FillScan::Exhausted;
 
         std::size_t slot = best_ask_slot_;
-        const std::size_t limit = static_cast<std::size_t>(order_price - base_price_);
+        const std::size_t limit = static_cast<std::size_t>(order_price - base_price_local);
 
         while (slot != invalid_index && slot <= limit) {
             const FillScan result = match_level<SameSide, StpActive>(
-                asks_[slot], remaining, base_price_ + slot, order, trade_writer);
+                asks_[slot], remaining, base_price_local + slot, order, trade_writer);
 
             if (asks_[slot].head == invalid_index) {
                 asks_occupied_[slot >> 6] &= ~(std::uint64_t{1} << (slot & 63));
@@ -178,12 +218,13 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, New
     } else {
         std::size_t slot = best_bid_slot_;
 
-        const std::size_t limit =
-            order_price < base_price_ ? 0 : static_cast<std::size_t>(order_price - base_price_);
+        const std::size_t limit = order_price < base_price_local
+                                      ? 0
+                                      : static_cast<std::size_t>(order_price - base_price_local);
 
         while (slot != invalid_index && slot >= limit) {
             const FillScan result = match_level<SameSide, StpActive>(
-                bids_[slot], remaining, base_price_ + slot, order, trade_writer);
+                bids_[slot], remaining, base_price_local + slot, order, trade_writer);
 
             if (bids_[slot].head == invalid_index) {
                 bids_occupied_[slot >> 6] &= ~(std::uint64_t{1} << (slot & 63));
@@ -220,7 +261,6 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_worse_overflow(Quantity &remai
 
     if constexpr (SameSide == Side::Buy) {
         for (auto it = asks_worse_overflow_.begin(); it != asks_worse_overflow_.end();) {
-
             auto &[price, level] = *it;
 
             if (order_price < price)
@@ -240,7 +280,6 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_worse_overflow(Quantity &remai
 
     } else {
         for (auto it = bids_worse_overflow_.begin(); it != bids_worse_overflow_.end();) {
-
             auto &[price, level] = *it;
 
             if (order_price > price)
@@ -442,19 +481,21 @@ auto DenseLadderOrderBook<Bandwidth, Hash>::scan_dense(const NewOrder &order, Qu
                                                        const ExcludedOrder &excluded) const noexcept
     -> FillScan {
 
+    const base_price_local = base_price_;
     const Price new_order_price = order.price;
 
     if constexpr (OppositeSide == Side::Buy) {
         std::size_t slot = best_bid_slot_;
         // if new_order_price > base_price + BandWidth, then the new order price is out of band and
         // the loop will not run
-        const std::size_t limit_slot = new_order_price >= base_price_
-                                           ? static_cast<std::size_t>(new_order_price - base_price_)
-                                           : 0;
+        const std::size_t limit_slot =
+            new_order_price >= base_price_local
+                ? static_cast<std::size_t>(new_order_price - base_price_local)
+                : 0;
 
         while (slot != invalid_index && slot >= limit_slot) {
             const FillScan result = scan_level<ExcludeOrder, StpActive>(
-                bids_[slot], slot + base_price_, order, remaining, excluded);
+                bids_[slot], slot + base_price_local, order, remaining, excluded);
             if (result != FillScan::Exhausted)
                 return result;
             slot = previous_occupied_slot(bids_occupied_, slot);
@@ -463,14 +504,14 @@ auto DenseLadderOrderBook<Bandwidth, Hash>::scan_dense(const NewOrder &order, Qu
         std::size_t slot = best_ask_slot_;
         // if new_order_price < base_price, then the new order price is out of band and the loop
         // will not run
-        if (new_order_price < base_price_)
+        if (new_order_price < base_price_local)
             return FillScan::Exhausted;
 
-        const std::size_t limit_slot = static_cast<std::size_t>(new_order_price - base_price_);
+        const std::size_t limit_slot = static_cast<std::size_t>(new_order_price - base_price_local);
 
         while (slot != invalid_index && slot <= limit_slot) {
             const FillScan result = scan_level<ExcludeOrder, StpActive>(
-                asks_[slot], slot + base_price_, order, remaining, excluded);
+                asks_[slot], slot + base_price_local, order, remaining, excluded);
             if (result != FillScan::Exhausted)
                 return result;
             slot = next_occupied_slot(asks_occupied_, slot);
