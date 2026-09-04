@@ -23,9 +23,10 @@ enum class AddStatus : std::uint8_t {
     WouldNotFullyFill
 };
 
-enum class AddOutcome : std::uint8_t {
+enum class MatchOutcome : std::uint8_t {
     None,
     Filled,
+    Exhausted,
     Rested,
     RemainderCancelled, // for immediate or cancel (IOC)
     STPCancelNew,
@@ -38,7 +39,7 @@ struct AddResult {
     Quantity remaining;
     std::uint32_t trade_count;
     AddStatus status;
-    AddOutcome outcome;
+    MatchOutcome outcome;
 
     [[nodiscard]] bool accepted() const noexcept {
         return status == AddStatus::Accepted;
@@ -97,7 +98,7 @@ struct ReplaceResult {
     Quantity remaining;
     std::uint32_t trade_count;
     ReplaceStatus status;
-    AddOutcome outcome;
+    MatchOutcome outcome;
 
     [[nodiscard]] bool replaced() const noexcept {
         return status == ReplaceStatus::Replaced;

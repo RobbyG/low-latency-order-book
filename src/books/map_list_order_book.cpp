@@ -223,7 +223,7 @@ AddResult MapListOrderBook::add_order(const NewOrder &order, TradeWriter &trade_
         return AddResult{.remaining = order.quantity,
                          .trade_count = 0,
                          .status = status,
-                         .outcome = AddOutcome::None};
+                         .outcome = MatchOutcome::None};
     }
 
     return add_validated_order(order, trade_writer);
@@ -286,7 +286,7 @@ ReplaceResult MapListOrderBook::replace_order(OrderId id, const NewOrder &order,
         return ReplaceResult{.remaining = Quantity{0},
                              .trade_count = 0,
                              .status = ReplaceStatus::NotFound,
-                             .outcome = AddOutcome::None};
+                             .outcome = MatchOutcome::None};
     }
 
     const AddStatus status = validate_new_replace_order(order, id);
@@ -294,7 +294,7 @@ ReplaceResult MapListOrderBook::replace_order(OrderId id, const NewOrder &order,
         return ReplaceResult{.remaining = index_it->second.it->quantity,
                              .trade_count = 0,
                              .status = lob::detail::to_replace_status(status),
-                             .outcome = AddOutcome::None};
+                             .outcome = MatchOutcome::None};
     }
 
     erase_resting(index_it);
@@ -486,13 +486,13 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
                     return AddResult{.remaining = remaining,
                                      .trade_count = trade_count,
                                      .status = AddStatus::Accepted,
-                                     .outcome = AddOutcome::STPCancelBoth};
+                                     .outcome = MatchOutcome::STPCancelBoth};
 
                 case SelfTradeResolve::CancelNew:
                     return AddResult{.remaining = remaining,
                                      .trade_count = trade_count,
                                      .status = AddStatus::Accepted,
-                                     .outcome = AddOutcome::STPCancelNew};
+                                     .outcome = MatchOutcome::STPCancelNew};
 
                 case SelfTradeResolve::DecrementAndCancel:
                     emit_trade = false;
@@ -538,17 +538,17 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
         // as a result
     }
 
-    AddOutcome outcome = AddOutcome::Filled;
+    MatchOutcome outcome = MatchOutcome::Filled;
     if (stp_decrement_and_cancel_hit)
-        outcome = AddOutcome::STPDecrementAndCancelFilled;
+        outcome = MatchOutcome::STPDecrementAndCancelFilled;
 
     if (remaining != Quantity{0}) {
         switch (aggressive_time_in_force) {
         case TimeInForce::Gtc:
         case TimeInForce::Gfd: {
             assert(is_limit);
-            outcome = stp_decrement_and_cancel_hit ? AddOutcome::STPDecrementAndCancelRested
-                                                   : AddOutcome::Rested;
+            outcome = stp_decrement_and_cancel_hit ? MatchOutcome::STPDecrementAndCancelRested
+                                                   : MatchOutcome::Rested;
 
             auto hint = same_side_levels.begin();
             const bool new_best = (hint == same_side_levels.end()) ||
@@ -573,7 +573,7 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
             break;
         }
         case TimeInForce::Ioc:
-            outcome = AddOutcome::RemainderCancelled;
+            outcome = MatchOutcome::RemainderCancelled;
             break;
         case TimeInForce::Fok:
             // unreachable: validate_new_order / validate_new_replace_order gate FOK on

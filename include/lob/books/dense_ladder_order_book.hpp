@@ -141,25 +141,33 @@ class DenseLadderOrderBook final {
 
     void reserve(const Config &config);
 
+    bool remove_from_order_index(OrderId id) noexcept;
+
+    void remove_resting_order(Level &level, RestingOrderNode &node,
+                              std::uint32_t node_index) noexcept;
+
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
 
     [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
 
     template <Side SameSide, bool StpActive>
-    [[nodiscard]] FillScan match_level(Level &level, Quantity &remaining, Price level_price,
-                                       NewOrder &order, TradeWriter &trade_writer);
+    [[nodiscard]] MatchOutcome match_level(Level &level, Quantity &remaining, Price level_price,
+                                           NewOrder &order, TradeWriter &trade_writer,
+                                           std::uint32_t &trade_count);
 
     template <Side SameSide, bool StpActive>
-    [[nodiscard]] FillScan match_better_overflow(Quantity &remaining, NewOrder &order,
-                                                 TradeWriter &trade_writer);
+    [[nodiscard]] MatchOutcome match_better_overflow(Quantity &remaining, NewOrder &order,
+                                                     TradeWriter &trade_writer,
+                                                     std::uint32_t &trade_count);
 
     template <Side SameSide, bool StpActive>
-    [[nodiscard]] FillScan match_dense(Quantity &remaining, NewOrder &order,
-                                       TradeWriter &trade_writer);
+    [[nodiscard]] MatchOutcome match_dense(Quantity &remaining, NewOrder &order,
+                                           TradeWriter &trade_writer, std::uint32_t &trade_count);
 
     template <Side SameSide, bool StpActive>
-    [[nodiscard]] FillScan match_worse_overflow(Quantity &remaining, NewOrder &order,
-                                                TradeWriter &trade_writer);
+    [[nodiscard]] MatchOutcome match_worse_overflow(Quantity &remaining, NewOrder &order,
+                                                    TradeWriter &trade_writer,
+                                                    std::uint32_t &trade_count);
 
     template <Side SameSide>
     [[nodiscard]] AddResult match_and_add(NewOrder &order, TradeWriter &trade_writer);
