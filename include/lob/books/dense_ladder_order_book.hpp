@@ -6,6 +6,7 @@
 #include <lob/order_book_results.hpp>
 
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -152,25 +153,31 @@ class DenseLadderOrderBook final {
 
     template <Side SameSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_level(Level &level, Quantity &remaining, Price level_price,
-                                           NewOrder &order, TradeWriter &trade_writer,
+                                           const NewOrder &order, TradeWriter &trade_writer,
                                            std::uint32_t &trade_count);
 
     template <Side SameSide, bool StpActive>
-    [[nodiscard]] MatchOutcome match_better_overflow(Quantity &remaining, NewOrder &order,
+    [[nodiscard]] MatchOutcome match_better_overflow(Quantity &remaining, const NewOrder &order,
                                                      TradeWriter &trade_writer,
                                                      std::uint32_t &trade_count);
 
     template <Side SameSide, bool StpActive>
-    [[nodiscard]] MatchOutcome match_dense(Quantity &remaining, NewOrder &order,
+    [[nodiscard]] MatchOutcome match_dense(Quantity &remaining, const NewOrder &order,
                                            TradeWriter &trade_writer, std::uint32_t &trade_count);
 
     template <Side SameSide, bool StpActive>
-    [[nodiscard]] MatchOutcome match_worse_overflow(Quantity &remaining, NewOrder &order,
+    [[nodiscard]] MatchOutcome match_worse_overflow(Quantity &remaining, const NewOrder &order,
                                                     TradeWriter &trade_writer,
                                                     std::uint32_t &trade_count);
 
-    template <Side SameSide>
-    [[nodiscard]] AddResult match_and_add(NewOrder &order, TradeWriter &trade_writer);
+    template <Side SameSide, bool StpActive>
+    [[nodiscard]] AddResult match_and_add(const NewOrder &order, TradeWriter &trade_writer);
+
+    [[nodiscard]] static constexpr std::size_t price_diff_to_size_t(Price price,
+                                                                    Price base) noexcept {
+        assert(price >= base);
+        return static_cast<std::size_t>((price - base).get_value());
+    }
 
     [[nodiscard]] std::size_t probe_slot(OrderId) const noexcept;
 
@@ -195,10 +202,9 @@ class DenseLadderOrderBook final {
     [[nodiscard]] FillScan scan_worse_overflow(const NewOrder &order, Quantity &remaining,
                                                const ExcludedOrder &excluded) const noexcept;
 
+    template <Side OppositeSide, bool StpActive>
+    [[nodiscard]] bool can_fill_levels(const NewOrder &order) const noexcept;
     template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
-    [[nodiscard]] bool can_fill_levels(const NewOrder &order,
-                                       std::size_t excluded_slot) const noexcept;
-    template <Side OppositeSide, bool ExcludeOrder>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order,
                                        std::size_t excluded_slot) const noexcept;
 

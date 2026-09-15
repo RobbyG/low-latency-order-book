@@ -25,6 +25,7 @@ enum class AddStatus : std::uint8_t {
 
 enum class MatchOutcome : std::uint8_t {
     None,
+    Aborted,
     Filled,
     Exhausted,
     Rested,

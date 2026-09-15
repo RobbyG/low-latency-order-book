@@ -21,11 +21,16 @@ using StpId = IdType<std::uint32_t, tag::StpId>;
 using Price = Scalar<std::int64_t, tag::Price>;
 using Quantity = Scalar<std::uint64_t, tag::Quantity>;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+
 #if defined(__GNUC__) || defined(__clang__)
 using Int128 = __int128;
 #else
 #error "lob requires compiler support for signed 128-bit integers"
 #endif
+
+#pragma GCC diagnostic pop
 
 using Notional = Scalar<Int128, tag::Notional>;
 

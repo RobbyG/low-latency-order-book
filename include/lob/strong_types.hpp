@@ -37,7 +37,7 @@ template <typename T, typename Tag> struct Scalar {
     }
 
   private:
-    T value_;
+    T value_{};
 };
 
 template <typename T, typename Tag> struct IdType {
