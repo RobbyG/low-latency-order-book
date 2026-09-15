@@ -107,9 +107,11 @@ template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 AddResult DenseLadderOrderBook<BandWidth, Hash>::add_validated_order(const NewOrder &order,
                                                                      TradeWriter &trade_writer) {
     if (order.side == Side::Buy)
-        return match_and_add<Side::Buy>(order, trade_writer);
+        return order.stp_id != StpId{0} ? <Side::Buy, true>(order, trade_writer)
+                                        : <Side::Buy, false>(order, trade_writer);
     else
-        return match_and_add<Side::Sell>(order, trade_writer);
+        return order.stp_id != StpId{0} ? <Side::Buy, true>(order, trade_writer)
+                                        : <Side::Buy, false>(order, trade_writer);
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
@@ -374,7 +376,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_worse_overflow(Quantity &remai
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-template <Side SameSide>
+template <Side SameSide, bool StpActive>
 AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(NewOrder &order,
                                                                TradeWriter &trade_writer) {
     Quantity remaining = order.quantity;
@@ -397,31 +399,28 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(NewOrder &order,
         }
     }
 
-    MatchOutcome result =
-        stp_active
-            ? match_better_overflow<SameSide, true>(remaining, order, trade_writer, trade_count)
-            : match_better_overflow<SameSide, false>(remaining, order, trade_writer, trade_count);
-    if (result != MatchOutcome::Exhausted)
-        return AddResult{.remaining = remaining,
-                         .trade_count = trade_count,
-                         .status = AddStatus::Accepted,
-                         .outcome = result};
-    result = stp_active ? match_dense<SameSide, true>(remaining, order, trade_writer, trade_count)
-                        : match_dense<SameSide, false>(remaining, order, trade_writer, trade_count);
-    if (result != MatchOutcome::Exhausted)
-        return AddResult{.remaining = remaining,
-                         .trade_count = trade_count,
-                         .status = AddStatus::Accepted,
-                         .outcome = result};
-    result =
-        stp_active
-            ? match_worse_overflow<SameSide, true>(remaining, order, trade_writer, trade_count)
-            : match_worse_overflow<SameSide, false>(remaining, order, trade_writer, trade_count);
-    if (result != MatchOutcome::Exhausted)
-        return AddResult{.remaining = remaining,
-                         .trade_count = trade_count,
-                         .status = AddStatus::Accepted,
-                         .outcome = result};
+    MatchOutcome result = match_better_overflow<SameSide, StpActive>(
+        remaining, order, trade_writer,
+        trade_count) if (result !=
+                         MatchOutcome::Exhausted) return AddResult{.remaining = remaining,
+                                                                   .trade_count = trade_count,
+                                                                   .status = AddStatus::Accepted,
+                                                                   .outcome = result};
+
+    result = match_dense<SameSide, StpActive>(
+        remaining, order, trade_writer,
+        trade_count) if (result !=
+                         MatchOutcome::Exhausted) return AddResult{.remaining = remaining,
+                                                                   .trade_count = trade_count,
+                                                                   .status = AddStatus::Accepted,
+                                                                   .outcome = result};
+    result = match_worse_overflow<SameSide, StpActive>(
+        remaining, order, trade_writer,
+        trade_count) if (result !=
+                         MatchOutcome::Exhausted) return AddResult{.remaining = remaining,
+                                                                   .trade_count = trade_count,
+                                                                   .status = AddStatus::Accepted,
+                                                                   .outcome = result};
 
     if (order.time_in_force == TimeInForce::Ioc) {
         return AddResult{.remaining = remaining,

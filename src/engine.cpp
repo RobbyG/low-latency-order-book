@@ -1,7 +1,7 @@
 #include <lob/engine.hpp>
 
 namespace lob {
-
+/*
 namespace {
 void log_trade(const Trade &trade) noexcept {
     (void)trade;
@@ -73,6 +73,6 @@ void Engine::output_loop() {
         }
         pause_cpu();
     }
-}
+}*/
 
 } // namespace lob
