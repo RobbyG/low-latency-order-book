@@ -104,7 +104,7 @@ class DenseLadderOrderBook final {
     enum class FillScan : std::uint8_t {
         Filled,
         Exhausted,
-        Aborted,
+        AbortedStp,
     };
 
     using Levels = std::array<Level, BandWidth>;
@@ -133,8 +133,8 @@ class DenseLadderOrderBook final {
     OverflowLevels bids_better_overflow_, bids_worse_overflow_;
     OverflowLevels asks_better_overflow_, asks_worse_overflow_;
 
-    std::vector<RestingOrderNode> order_pool_;
-    std::uint32_t resting_pool_head_{invalid_index};
+    std::vector<RestingOrderNode> resting_order_pool_;
+    std::uint32_t resting_order_pool_head_{};
 
     std::vector<IdEntry> order_index_;
     std::size_t order_index_mask_{};
@@ -151,27 +151,30 @@ class DenseLadderOrderBook final {
 
     [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
 
-    template <Side SameSide, bool StpActive>
+    template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_level(Level &level, Quantity &remaining, Price level_price,
                                            const NewOrder &order, TradeWriter &trade_writer,
                                            std::uint32_t &trade_count);
 
-    template <Side SameSide, bool StpActive>
+    template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_better_overflow(Quantity &remaining, const NewOrder &order,
                                                      TradeWriter &trade_writer,
                                                      std::uint32_t &trade_count);
 
-    template <Side SameSide, bool StpActive>
+    template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_dense(Quantity &remaining, const NewOrder &order,
                                            TradeWriter &trade_writer, std::uint32_t &trade_count);
 
-    template <Side SameSide, bool StpActive>
+    template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_worse_overflow(Quantity &remaining, const NewOrder &order,
                                                     TradeWriter &trade_writer,
                                                     std::uint32_t &trade_count);
 
-    template <Side SameSide, bool StpActive>
-    [[nodiscard]] AddResult match_and_add(const NewOrder &order, TradeWriter &trade_writer);
+    template <Side AggressiveSide, bool StpActive>
+    [[nodiscard]] AddResult match_order(const NewOrder &order, TradeWriter &trade_writer);
+
+    template <Side AggressiveSide, bool StpActive>
+    [[nodiscard]] AddResult rest_new_order(const NewOrder &order);
 
     [[nodiscard]] static constexpr std::size_t price_diff_to_size_t(Price price,
                                                                     Price base) noexcept {

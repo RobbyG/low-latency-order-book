@@ -9,31 +9,19 @@
 namespace lob {
 enum class AddStatus : std::uint8_t {
     Accepted,
-
-    InvalidQuantity,
-    InvalidPrice,
-
-    InvalidOrderType,
-    InvalidTimeInForce,
-    InvalidOrderTypeTimeInForce,
+    Rested,
+    RemainderCancelled,
 
     DuplicateOrderId,
     BookFull,
-
-    WouldNotFullyFill
+    WouldNotFullyFill,
 };
 
 enum class MatchOutcome : std::uint8_t {
     None,
-    Aborted,
+    AbortedStp,
     Filled,
     Exhausted,
-    Rested,
-    RemainderCancelled, // for immediate or cancel (IOC)
-    STPCancelNew,
-    STPCancelBoth,
-    STPDecrementAndCancelFilled,
-    STPDecrementAndCancelRested
 };
 
 struct AddResult {
@@ -80,18 +68,13 @@ static_assert(sizeof(ReduceResult) <= 24, "ReduceResult size must be <= 24 bytes
 
 enum class ReplaceStatus : std::uint8_t {
     Replaced,
+    Rested,
+    RemainderCancelled,
+
     NotFound,
-
-    InvalidQuantity,
-    InvalidPrice,
-
-    InvalidOrderType,
-    InvalidTimeInForce,
-    InvalidOrderTypeTimeInForce,
 
     DuplicateOrderId,
     BookFull,
-
     WouldNotFullyFill,
 };
 
@@ -158,20 +141,11 @@ namespace detail {
     case AddStatus::Accepted:
         return ReplaceStatus::Replaced;
 
-    case AddStatus::InvalidQuantity:
-        return ReplaceStatus::InvalidQuantity;
+    case AddStatus::Rested:
+        return ReplaceStatus::Rested;
 
-    case AddStatus::InvalidPrice:
-        return ReplaceStatus::InvalidPrice;
-
-    case AddStatus::InvalidOrderType:
-        return ReplaceStatus::InvalidOrderType;
-
-    case AddStatus::InvalidTimeInForce:
-        return ReplaceStatus::InvalidTimeInForce;
-
-    case AddStatus::InvalidOrderTypeTimeInForce:
-        return ReplaceStatus::InvalidOrderTypeTimeInForce;
+    case AddStatus::RemainderCancelled:
+        return ReplaceStatus::RemainderCancelled;
 
     case AddStatus::DuplicateOrderId:
         return ReplaceStatus::DuplicateOrderId;

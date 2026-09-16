@@ -38,9 +38,21 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::add_order(const NewOrder &order
 // private functions
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 void DenseLadderOrderBook<BandWidth, Hash>::reserve(const Config &config) {
-    order_pool_.reserve(config.max_orders);
 
     base_price_ = config.base;
+
+    resting_order_pool_.reserve(config.max_orders);
+
+    if (config.max_orders == 0)
+        resting_order_pool_head_ = invalid_index;
+    else {
+        resting_order_pool_head_ = 0;
+
+        for (std::uint32_t i = 0; i < config.max_orders - 1; ++i)
+            resting_order_pool_[i].next = i + 1;
+
+        resting_order_pool_[config.max_orders - 1].next = invalid_index;
+    }
 
     std::size_t hash_slots =
         std::max<std::size_t>(2, static_cast<std::size_t>(config.max_orders * 2));
@@ -74,20 +86,20 @@ void DenseLadderOrderBook<BandWidth, Hash>::remove_resting_order(
     if (node.prev == invalid_index) {
         level.head = node.next;
         if (node.next != invalid_index)
-            order_pool_[node.next].prev = node.prev;
+            resting_order_pool_[node.next].prev = node.prev;
         else
             level.tail = invalid_index;
     } else if (node.next == invalid_index) {
-        order_pool_[node.prev].next = invalid_index;
+        resting_order_pool_[node.prev].next = invalid_index;
         level.tail = node.prev;
     } else {
-        order_pool_[node.prev].next = node.next;
-        order_pool_[node.next].prev = node.prev;
+        resting_order_pool_[node.prev].next = node.next;
+        resting_order_pool_[node.next].prev = node.prev;
     }
 
     remove_from_order_index(node.id);
-    node.next = resting_pool_head_;
-    resting_pool_head_ = node_index;
+    node.next = resting_order_pool_head_;
+    resting_order_pool_head_ = node_index;
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
@@ -108,23 +120,27 @@ DenseLadderOrderBook<BandWidth, Hash>::validate_new_order(const NewOrder &order)
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 AddResult DenseLadderOrderBook<BandWidth, Hash>::add_validated_order(const NewOrder &order,
                                                                      TradeWriter &trade_writer) {
+
+    AddResult result;
     if (order.side == Side::Buy)
-        return order.stp_id != StpId{0} ? match_and_add<Side::Buy, true>(order, trade_writer)
-                                        : match_and_add<Side::Buy, false>(order, trade_writer);
+        result = order.stp_id != StpId{0} ? match_order<Side::Buy, true>(order, trade_writer)
+                                          : match_order<Side::Buy, false>(order, trade_writer);
     else
-        return order.stp_id != StpId{0} ? match_and_add<Side::Buy, true>(order, trade_writer)
-                                        : match_and_add<Side::Buy, false>(order, trade_writer);
+        result = order.stp_id != StpId{0} ? match_order<Side::Buy, true>(order, trade_writer)
+                                          : match_order<Side::Buy, false>(order, trade_writer);
+
+    if (result.status == AddStatus::Accepted && result.outcome == MatchOutcome::Exhausted)
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-template <Side SameSide, bool StpActive>
+template <Side AggressiveSide, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &remaining,
                                                         Price level_price, const NewOrder &order,
                                                         TradeWriter &trade_writer,
                                                         std::uint32_t &trade_count)
     -> MatchOutcome {
 
-    bool emit_trade = true;
+    bool emit_trade;
     if (level.head == invalid_index)
         return MatchOutcome::Exhausted;
 
@@ -132,15 +148,16 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
     while (node_index != invalid_index && remaining > Quantity{0}) {
         emit_trade = true;
         std::uint32_t node_index_copy = node_index;
-        RestingOrderNode &node = order_pool_[node_index];
+        RestingOrderNode &node = resting_order_pool_[node_index];
+
         if constexpr (StpActive) {
             if (order.stp_id == node.stp_id) {
                 switch (order.self_trade_resolve) {
                 case SelfTradeResolve::CancelBoth:
                     remove_resting_order(level, node, node_index);
-                    return MatchOutcome::Aborted;
+                    return MatchOutcome::AbortedStp;
                 case SelfTradeResolve::CancelNew:
-                    return MatchOutcome::Aborted;
+                    return MatchOutcome::AbortedStp;
                 case SelfTradeResolve::CancelResting:
                     node_index = node.next;
                     remove_resting_order(level, node, node_index_copy);
@@ -164,7 +181,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
                                   .resting_order_id = node.id,
                                   .price = level_price,
                                   .quantity = node.quantity,
-                                  .aggressive_side = SameSide};
+                                  .aggressive_side = AggressiveSide};
 
                 trade_writer.on_trade(trade);
                 ++trade_count;
@@ -176,7 +193,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
                                   .resting_order_id = node.id,
                                   .price = level_price,
                                   .quantity = remaining,
-                                  .aggressive_side = SameSide};
+                                  .aggressive_side = AggressiveSide};
 
                 trade_writer.on_trade(trade);
                 ++trade_count;
@@ -193,7 +210,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-template <Side SameSide, bool StpActive>
+template <Side AggressiveSide, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::match_better_overflow(Quantity &remaining,
                                                                   const NewOrder &order,
                                                                   TradeWriter &trade_writer,
@@ -202,7 +219,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_better_overflow(Quantity &rema
 
     const Price order_price = order.price;
 
-    if constexpr (SameSide == Side::Buy) {
+    if constexpr (AggressiveSide == Side::Buy) {
         for (auto it = asks_better_overflow_.begin(); it != asks_better_overflow_.end();) {
 
             auto &[price, level] = *it;
@@ -210,7 +227,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_better_overflow(Quantity &rema
             if (order.order_type == OrderType::Limit && order_price < price)
                 break;
 
-            const MatchOutcome result = match_level<SameSide, StpActive>(
+            const MatchOutcome result = match_level<AggressiveSide, StpActive>(
                 level, remaining, price, order, trade_writer, trade_count);
 
             if (level.head == invalid_index)
@@ -230,7 +247,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_better_overflow(Quantity &rema
             if (order.order_type == OrderType::Limit && order_price > price)
                 break;
 
-            const MatchOutcome result = match_level<SameSide, StpActive>(
+            const MatchOutcome result = match_level<AggressiveSide, StpActive>(
                 level, remaining, price, order, trade_writer, trade_count);
 
             if (level.head == invalid_index)
@@ -247,7 +264,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_better_overflow(Quantity &rema
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-template <Side SameSide, bool StpActive>
+template <Side AggressiveSide, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, const NewOrder &order,
                                                         TradeWriter &trade_writer,
                                                         std::uint32_t &trade_count)
@@ -256,7 +273,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, con
     const Price order_price = order.price;
     const Price base_price_local = base_price_;
 
-    if constexpr (SameSide == Side::Buy) {
+    if constexpr (AggressiveSide == Side::Buy) {
         if (order_price < base_price_local)
             return MatchOutcome::Exhausted;
 
@@ -266,7 +283,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, con
                                       : BandWidth - 1;
 
         while (slot != invalid_index && slot <= limit) {
-            const MatchOutcome result = match_level<SameSide, StpActive>(
+            const MatchOutcome result = match_level<AggressiveSide, StpActive>(
                 asks_[slot], remaining, base_price_local + Price{static_cast<std::int64_t>(slot)},
                 order, trade_writer, trade_count);
 
@@ -300,7 +317,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, con
                 : price_diff_to_size_t(order_price, base_price_local);
 
         while (slot != invalid_index && slot >= limit) {
-            const MatchOutcome result = match_level<SameSide, StpActive>(
+            const MatchOutcome result = match_level<AggressiveSide, StpActive>(
                 bids_[slot], remaining, base_price_local + Price{static_cast<std::int64_t>(slot)},
                 order, trade_writer, trade_count);
 
@@ -330,7 +347,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, con
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-template <Side SameSide, bool StpActive>
+template <Side AggressiveSide, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::match_worse_overflow(Quantity &remaining,
                                                                  const NewOrder &order,
                                                                  TradeWriter &trade_writer,
@@ -339,14 +356,14 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_worse_overflow(Quantity &remai
 
     const Price order_price = order.price;
 
-    if constexpr (SameSide == Side::Buy) {
+    if constexpr (AggressiveSide == Side::Buy) {
         for (auto it = asks_worse_overflow_.begin(); it != asks_worse_overflow_.end();) {
             auto &[price, level] = *it;
 
             if (order.order_type == OrderType::Limit && order_price < price)
                 break;
 
-            const MatchOutcome result = match_level<SameSide, StpActive>(
+            const MatchOutcome result = match_level<AggressiveSide, StpActive>(
                 level, remaining, price, order, trade_writer, trade_count);
 
             if (level.head == invalid_index)
@@ -365,7 +382,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_worse_overflow(Quantity &remai
             if (order.order_type == OrderType::Limit && order_price > price)
                 break;
 
-            const MatchOutcome result = match_level<SameSide, StpActive>(
+            const MatchOutcome result = match_level<AggressiveSide, StpActive>(
                 level, remaining, price, order, trade_writer, trade_count);
 
             if (level.head == invalid_index)
@@ -382,66 +399,68 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_worse_overflow(Quantity &remai
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-template <Side SameSide, bool StpActive>
-AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &order,
-                                                               TradeWriter &trade_writer) {
+template <Side AggressiveSide, bool StpActive>
+AddResult DenseLadderOrderBook<BandWidth, Hash>::match_order(const NewOrder &order,
+                                                             TradeWriter &trade_writer) {
     Quantity remaining = order.quantity;
     std::uint32_t trade_count = 0;
 
-    if (resting_pool_head_ == invalid_index) {
+    if (resting_order_pool_head_ == invalid_index) {
         return AddResult{.remaining = remaining,
                          .trade_count = trade_count,
                          .status = AddStatus::BookFull,
                          .outcome = MatchOutcome::None};
     }
 
-    if (order.time_in_force == TimeInForce::Fok) {
-        if (!can_fully_fill(order)) {
-            return AddResult{.remaining = remaining,
-                             .trade_count = trade_count,
-                             .status = AddStatus::WouldNotFullyFill,
-                             .outcome = MatchOutcome::None};
-        }
-    }
-
-    MatchOutcome result =
-        match_better_overflow<SameSide, StpActive>(remaining, order, trade_writer, trade_count);
+    MatchOutcome result = match_better_overflow<AggressiveSide, StpActive>(
+        remaining, order, trade_writer, trade_count);
     if (result != MatchOutcome::Exhausted)
         return AddResult{.remaining = remaining,
                          .trade_count = trade_count,
                          .status = AddStatus::Accepted,
                          .outcome = result};
 
-    result = match_dense<SameSide, StpActive>(remaining, order, trade_writer, trade_count);
+    result = match_dense<AggressiveSide, StpActive>(remaining, order, trade_writer, trade_count);
     if (result != MatchOutcome::Exhausted)
         return AddResult{.remaining = remaining,
                          .trade_count = trade_count,
                          .status = AddStatus::Accepted,
                          .outcome = result};
-    result = match_worse_overflow<SameSide, StpActive>(remaining, order, trade_writer, trade_count);
+    result = match_worse_overflow<AggressiveSide, StpActive>(remaining, order, trade_writer,
+                                                             trade_count);
     if (result != MatchOutcome::Exhausted)
         return AddResult{.remaining = remaining,
                          .trade_count = trade_count,
                          .status = AddStatus::Accepted,
                          .outcome = result};
 
-    if (order.time_in_force == TimeInForce::Ioc) {
+    if (order.time_in_force == TimeInForce::Ioc)
         return AddResult{.remaining = remaining,
                          .trade_count = trade_count,
-                         .status = AddStatus::Accepted,
-                         .outcome = MatchOutcome::RemainderCancelled};
-    }
+                         .status = AddStatus::RemainderCancelled,
+                         .outcome = MatchOutcome::Exhausted};
 
-    if constexpr (SameSide == Side::Buy) {
+    return AddResult{.remaining = remaining,
+                     .trade_count = trade_count,
+                     .status = AddStatus::Accepted,
+                     .outcome = MatchOutcome::Exhausted};
+}
 
-        std::uint32_t new_node_index = resting_pool_head_;
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side AggressiveSide, bool StpActive>
+AddResult DenseLadderOrderBook<BandWidth, Hash>::rest_order(const NewOrder &order) {
+
+    // needs to be rested
+    if constexpr (AggressiveSide == Side::Buy) {
+
+        std::uint32_t new_node_index = resting_order_pool_head_;
 
         std::size_t slot = probe_slot(order.id);
         if (order_index_[slot].id == order.id) {
             return AddResult{.remaining = remaining,
                              .trade_count = trade_count,
                              .status = AddStatus::DuplicateOrderId,
-                             .outcome = MatchOutcome::RemainderCancelled};
+                             .outcome = MatchOutcome::Exhausted};
         } else {
             order_index_[slot] = IdEntry{.id = order.id,
                                          .price = order.price,
@@ -449,13 +468,13 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
                                          .side = Side::Buy};
         }
 
-        resting_pool_head_ = order_pool_[new_node_index].next;
+        resting_order_pool_head_ = resting_order_pool_[new_node_index].next;
 
-        order_pool_[new_node_index].id = order.id;
-        order_pool_[new_node_index].quantity = remaining;
-        order_pool_[new_node_index].stp_id = order.stp_id;
-        order_pool_[new_node_index].time_in_force = order.time_in_force;
-        order_pool_[new_node_index].next = invalid_index;
+        resting_order_pool_[new_node_index].id = order.id;
+        resting_order_pool_[new_node_index].quantity = remaining;
+        resting_order_pool_[new_node_index].stp_id = order.stp_id;
+        resting_order_pool_[new_node_index].time_in_force = order.time_in_force;
+        resting_order_pool_[new_node_index].next = invalid_index;
 
         if (order.price > base_price_ + Price{BandWidth - 1}) {
             auto it = std::lower_bound(
@@ -464,8 +483,8 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
 
             if (it != bids_better_overflow_.end() && it->first == order.price) {
                 Level &level = it->second;
-                order_pool_[level.tail].next = new_node_index;
-                order_pool_[new_node_index].prev = level.tail;
+                resting_order_pool_[level.tail].next = new_node_index;
+                resting_order_pool_[new_node_index].prev = level.tail;
                 level.tail = new_node_index;
                 level.total_quantity += remaining;
             } else {
@@ -474,7 +493,7 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
                 level.head = new_node_index;
                 level.tail = new_node_index;
 
-                order_pool_[new_node_index].prev = invalid_index;
+                resting_order_pool_[new_node_index].prev = invalid_index;
                 level.total_quantity += remaining;
             }
 
@@ -483,11 +502,11 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
             if (level.total_quantity == Quantity{0}) {
                 level.head = new_node_index;
                 level.tail = new_node_index;
-                order_pool_[new_node_index].prev = invalid_index;
+                resting_order_pool_[new_node_index].prev = invalid_index;
                 level.total_quantity += remaining;
             } else {
-                order_pool_[level.tail].next = new_node_index;
-                order_pool_[new_node_index].prev = level.tail;
+                resting_order_pool_[level.tail].next = new_node_index;
+                resting_order_pool_[new_node_index].prev = level.tail;
                 level.tail = new_node_index;
                 level.total_quantity += remaining;
             }
@@ -500,8 +519,8 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
 
             if (it != bids_worse_overflow_.end() && it->first == order.price) {
                 Level &level = it->second;
-                order_pool_[level.tail].next = new_node_index;
-                order_pool_[new_node_index].prev = level.tail;
+                resting_order_pool_[level.tail].next = new_node_index;
+                resting_order_pool_[new_node_index].prev = level.tail;
                 level.tail = new_node_index;
                 level.total_quantity += remaining;
             } else {
@@ -510,21 +529,21 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
 
                 level.head = new_node_index;
                 level.tail = new_node_index;
-                order_pool_[new_node_index].prev = invalid_index;
+                resting_order_pool_[new_node_index].prev = invalid_index;
                 level.total_quantity += remaining;
             }
         }
 
     } else {
 
-        std::uint32_t new_node_index = resting_pool_head_;
+        std::uint32_t new_node_index = resting_order_pool_head_;
 
         std::size_t slot = probe_slot(order.id);
         if (order_index_[slot].id == order.id) {
             return AddResult{.remaining = remaining,
                              .trade_count = trade_count,
                              .status = AddStatus::DuplicateOrderId,
-                             .outcome = MatchOutcome::RemainderCancelled};
+                             .outcome = MatchOutcome::Exhausted};
         } else {
             order_index_[slot] = IdEntry{.id = order.id,
                                          .price = order.price,
@@ -532,13 +551,13 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
                                          .side = Side::Buy};
         }
 
-        resting_pool_head_ = order_pool_[new_node_index].next;
+        resting_order_pool_head_ = resting_order_pool_[new_node_index].next;
 
-        order_pool_[new_node_index].id = order.id;
-        order_pool_[new_node_index].quantity = remaining;
-        order_pool_[new_node_index].stp_id = order.stp_id;
-        order_pool_[new_node_index].time_in_force = order.time_in_force;
-        order_pool_[new_node_index].next = invalid_index;
+        resting_order_pool_[new_node_index].id = order.id;
+        resting_order_pool_[new_node_index].quantity = remaining;
+        resting_order_pool_[new_node_index].stp_id = order.stp_id;
+        resting_order_pool_[new_node_index].time_in_force = order.time_in_force;
+        resting_order_pool_[new_node_index].next = invalid_index;
 
         if (order.price > base_price_ + Price{BandWidth - 1}) {
             auto it = std::lower_bound(
@@ -547,8 +566,8 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
 
             if (it != asks_better_overflow_.end() && it->first == order.price) {
                 Level &level = it->second;
-                order_pool_[level.tail].next = new_node_index;
-                order_pool_[new_node_index].prev = level.tail;
+                resting_order_pool_[level.tail].next = new_node_index;
+                resting_order_pool_[new_node_index].prev = level.tail;
                 level.tail = new_node_index;
                 level.total_quantity += remaining;
             } else {
@@ -557,7 +576,7 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
                 level.head = new_node_index;
                 level.tail = new_node_index;
 
-                order_pool_[new_node_index].prev = invalid_index;
+                resting_order_pool_[new_node_index].prev = invalid_index;
                 level.total_quantity += remaining;
             }
 
@@ -566,11 +585,11 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
             if (level.total_quantity == 0) {
                 level.head = new_node_index;
                 level.tail = new_node_index;
-                order_pool_[new_node_index].prev = invalid_index;
+                resting_order_pool_[new_node_index].prev = invalid_index;
                 level.total_quantity += remaining;
             } else {
-                order_pool_[level.tail].next = new_node_index;
-                order_pool_[new_node_index].prev = level.tail;
+                resting_order_pool_[level.tail].next = new_node_index;
+                resting_order_pool_[new_node_index].prev = level.tail;
                 level.tail = new_node_index;
                 level.total_quantity += remaining;
             }
@@ -583,8 +602,8 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
 
             if (it != asks_worse_overflow_.end() && it->first == order.price) {
                 Level &level = it->second;
-                order_pool_[level.tail].next = new_node_index;
-                order_pool_[new_node_index].prev = level.tail;
+                resting_order_pool_[level.tail].next = new_node_index;
+                resting_order_pool_[new_node_index].prev = level.tail;
                 level.tail = new_node_index;
                 level.total_quantity += remaining;
             } else {
@@ -593,7 +612,7 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
 
                 level.head = new_node_index;
                 level.tail = new_node_index;
-                order_pool_[new_node_index].prev = invalid_index;
+                resting_order_pool_[new_node_index].prev = invalid_index;
                 level.total_quantity += remaining;
             }
         }
@@ -601,8 +620,8 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::match_and_add(const NewOrder &o
 
     return AddResult{.remaining = remaining,
                      .trade_count = trade_count,
-                     .status = AddStatus::Accepted,
-                     .outcome = MatchOutcome::Rested};
+                     .status = AddStatus::Rested,
+                     .outcome = MatchOutcome::Exhausted};
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
@@ -696,7 +715,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::scan_level(const Level &level, Price
         std::uint32_t node = level.head;
 
         while (node != invalid_index) {
-            const RestingOrderNode &resting = order_pool_[node];
+            const RestingOrderNode &resting = resting_order_pool_[node];
             const std::uint32_t next = resting.next;
 
             if constexpr (ExcludeOrder) {
@@ -710,7 +729,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::scan_level(const Level &level, Price
                 switch (stp_policy) {
                 case SelfTradeResolve::CancelNew:
                 case SelfTradeResolve::CancelBoth:
-                    return FillScan::Aborted;
+                    return FillScan::AbortedStp;
 
                 case SelfTradeResolve::CancelResting:
                     node = next;
@@ -872,7 +891,7 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(
         if (entry.side == OppositeSide) {
             excluded.node_index = entry.node_index;
             excluded.price = entry.price;
-            excluded.quantity = order_pool_[entry.node_index].quantity;
+            excluded.quantity = resting_order_pool_[entry.node_index].quantity;
         }
         // if we have the excluded order on the wrong side, just mark it with node index
         // invalid_index and quantity 0
@@ -880,19 +899,19 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(
 
     FillScan result =
         scan_better_overflow<OppositeSide, ExcludeOrder, StpActive>(order, remaining, excluded);
-    if (result == FillScan::Aborted)
+    if (result == FillScan::AbortedStp)
         return false;
     if (result == FillScan::Filled)
         return true;
 
     result = scan_dense<OppositeSide, ExcludeOrder, StpActive>(order, remaining, excluded);
-    if (result == FillScan::Aborted)
+    if (result == FillScan::AbortedStp)
         return false;
     if (result == FillScan::Filled)
         return true;
 
     result = scan_worse_overflow<OppositeSide, ExcludeOrder, StpActive>(order, remaining, excluded);
-    if (result == FillScan::Aborted)
+    if (result == FillScan::AbortedStp)
         return false;
     if (result == FillScan::Filled)
         return true;
