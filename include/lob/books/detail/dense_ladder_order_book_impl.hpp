@@ -261,10 +261,9 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, con
             return MatchOutcome::Exhausted;
 
         std::size_t slot = best_ask_slot_;
-        const std::size_t limit =
-            order.order_type == OrderType::Limit
-                ? price_diff_to_size_t(order.price, base_price_local)
-                : static_cast<std::size_t>(base_price_local.get_value() + BandWidth - 1);
+        const std::size_t limit = order.order_type == OrderType::Limit
+                                      ? price_diff_to_size_t(order_price, base_price_local)
+                                      : BandWidth - 1;
 
         while (slot != invalid_index && slot <= limit) {
             const MatchOutcome result = match_level<SameSide, StpActive>(
@@ -272,7 +271,8 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, con
                 order, trade_writer, trade_count);
 
             if (asks_[slot].head == invalid_index) {
-                asks_occupied_[slot >> 6] &= ~(std::uint64_t{1} << (slot & 63));
+                asks_occupied_[slot >> 6] &=
+                    ~(std::uint64_t{1} << (slot & 63)); // clear slot bit in asks_occupied_
 
                 const std::size_t next = next_occupied_slot(asks_occupied_, slot);
 
@@ -280,24 +280,24 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, con
                     best_ask_slot_ = next;
 
                 slot = next;
+
+                if (result != MatchOutcome::Exhausted)
+                    return result;
             } else {
                 if (result != MatchOutcome::Exhausted)
                     return result;
 
                 slot = next_occupied_slot(asks_occupied_, slot);
             }
-
-            if (result != MatchOutcome::Exhausted)
-                return result;
         }
 
     } else {
         std::size_t slot = best_bid_slot_;
 
         const std::size_t limit =
-            order_price < base_price_local || order.order_type == OrderType::Market
+            order_price < base_price_local || order.order_type == OrderType::Limit
                 ? 0
-                : price_diff_to_size_t(order.price, base_price_local);
+                : price_diff_to_size_t(order_price, base_price_local);
 
         while (slot != invalid_index && slot >= limit) {
             const MatchOutcome result = match_level<SameSide, StpActive>(
@@ -305,7 +305,8 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, con
                 order, trade_writer, trade_count);
 
             if (bids_[slot].head == invalid_index) {
-                bids_occupied_[slot >> 6] &= ~(std::uint64_t{1} << (slot & 63));
+                bids_occupied_[slot >> 6] &=
+                    ~(std::uint64_t{1} << (slot & 63)); // clear slot bit in bids_occupied_
 
                 const std::size_t previous = previous_occupied_slot(bids_occupied_, slot);
 
@@ -313,15 +314,15 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, con
                     best_bid_slot_ = previous;
 
                 slot = previous;
+
+                if (result != MatchOutcome::Exhausted)
+                    return result;
             } else {
                 if (result != MatchOutcome::Exhausted)
                     return result;
 
                 slot = previous_occupied_slot(bids_occupied_, slot);
             }
-
-            if (result != MatchOutcome::Exhausted)
-                return result;
         }
     }
 
