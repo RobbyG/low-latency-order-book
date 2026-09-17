@@ -7,6 +7,20 @@
 #include <utility>
 
 namespace lob {
+
+enum class MatchOutcome : std::uint8_t {
+    None,
+    Aborted,
+    Filled,
+    Exhausted,
+};
+
+enum class ScanOutcome : std::uint8_t {
+    WillAbort,
+    WillFill,
+    WillExhaust,
+};
+
 enum class AddStatus : std::uint8_t {
     Accepted,
     Rested,
@@ -15,13 +29,6 @@ enum class AddStatus : std::uint8_t {
     DuplicateOrderId,
     BookFull,
     WouldNotFullyFill,
-};
-
-enum class MatchOutcome : std::uint8_t {
-    None,
-    AbortedStp,
-    Filled,
-    Exhausted,
 };
 
 struct AddResult {
@@ -38,6 +45,7 @@ struct AddResult {
         return !accepted();
     }
 };
+
 static_assert(sizeof(AddResult) <= 16, "AddResult size must be <= 16 bytes");
 
 enum class CancelStatus : std::uint8_t { Cancelled, NotFound };

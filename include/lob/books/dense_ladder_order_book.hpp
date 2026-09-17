@@ -101,12 +101,6 @@ class DenseLadderOrderBook final {
         Quantity quantity{};
     };
 
-    enum class FillScan : std::uint8_t {
-        Filled,
-        Exhausted,
-        AbortedStp,
-    };
-
     using Levels = std::array<Level, BandWidth>;
     using Occupancy = std::array<std::uint64_t, (BandWidth + 63) / 64>;
     using OverflowLevels = std::vector<std::pair<Price, Level>>;
@@ -149,8 +143,6 @@ class DenseLadderOrderBook final {
 
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
 
-    [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
-
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_level(Level &level, Quantity &remaining, Price level_price,
                                            const NewOrder &order, TradeWriter &trade_writer,
@@ -171,10 +163,11 @@ class DenseLadderOrderBook final {
                                                     std::uint32_t &trade_count);
 
     template <Side AggressiveSide, bool StpActive>
-    [[nodiscard]] AddResult match_order(const NewOrder &order, TradeWriter &trade_writer);
+    [[nodiscard]] MatchOutcome match_order(Quantity &remaining, const NewOrder &order,
+                                           TradeWriter &trade_writer, std::uint32_t &trade_count);
 
     template <Side AggressiveSide, bool StpActive>
-    [[nodiscard]] AddResult rest_new_order(const NewOrder &order);
+    [[nodiscard]] bool rest_order(const NewOrder &order);
 
     [[nodiscard]] static constexpr std::size_t price_diff_to_size_t(Price price,
                                                                     Price base) noexcept {
@@ -192,18 +185,19 @@ class DenseLadderOrderBook final {
                                                  std::size_t slot) const noexcept;
 
     template <bool ExcludeOrder, bool StpActive>
-    FillScan scan_level(const Level &level, Price level_price, const NewOrder &order,
-                        Quantity &remaining, const ExcludedOrder &excluded) const noexcept;
+    [[nodiscard]] ScanOutcome scan_level(const Level &level, Price level_price,
+                                         const NewOrder &order, Quantity &remaining,
+                                         const ExcludedOrder &excluded) const noexcept;
 
     template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
-    [[nodiscard]] FillScan scan_better_overflow(const NewOrder &order, Quantity &remaining,
-                                                const ExcludedOrder &excluded) const noexcept;
+    [[nodiscard]] ScanOutcome scan_better_overflow(const NewOrder &order, Quantity &remaining,
+                                                   const ExcludedOrder &excluded) const noexcept;
     template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
-    [[nodiscard]] FillScan scan_dense(const NewOrder &order, Quantity &remaining,
-                                      const ExcludedOrder &excluded) const noexcept;
+    [[nodiscard]] ScanOutcome scan_dense(const NewOrder &order, Quantity &remaining,
+                                         const ExcludedOrder &excluded) const noexcept;
     template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
-    [[nodiscard]] FillScan scan_worse_overflow(const NewOrder &order, Quantity &remaining,
-                                               const ExcludedOrder &excluded) const noexcept;
+    [[nodiscard]] ScanOutcome scan_worse_overflow(const NewOrder &order, Quantity &remaining,
+                                                  const ExcludedOrder &excluded) const noexcept;
 
     template <Side OppositeSide, bool StpActive>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order) const noexcept;
