@@ -23,7 +23,7 @@ template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 AddResult DenseLadderOrderBook<BandWidth, Hash>::add_order(const NewOrder &order,
                                                            TradeWriter &trade_writer) {
     assert(order.quantity != Quantity{0} && "Order cannot have a quantity of 0");
-
+    // validate
     AddStatus status = validate_new_order(order);
     if (status != AddStatus::Accepted) {
         return AddResult{.remaining = order.quantity,
@@ -31,7 +31,7 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::add_order(const NewOrder &order
                          .status = status,
                          .outcome = MatchOutcome::None};
     }
-
+    // match
     if (order.side == Side::Buy)
         result = order.stp_id != StpId{0} ? match_order<Side::Buy, true>(order, trade_writer)
                                           : match_order<Side::Buy, false>(order, trade_writer);
@@ -39,6 +39,7 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::add_order(const NewOrder &order
         result = order.stp_id != StpId{0} ? match_order<Side::Buy, true>(order, trade_writer)
                                           : match_order<Side::Buy, false>(order, trade_writer);
 
+    // rest if required
     AddResult result;
     return result;
 }
@@ -126,18 +127,6 @@ DenseLadderOrderBook<BandWidth, Hash>::validate_new_order(const NewOrder &order)
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-AddResult DenseLadderOrderBook<BandWidth, Hash>::add_validated_order(const NewOrder &order,
-                                                                     TradeWriter &trade_writer) {
-
-    AddResult result;
-
-    if (result.status == AddStatus::Accepted && result.outcome == MatchOutcome::Exhausted) {
-    }
-
-    return result;
-}
-
-template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side AggressiveSide, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &remaining,
                                                         Price level_price, const NewOrder &order,
@@ -214,58 +203,95 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
         return MatchOutcome::Exhausted;
 }
 
+template <Side RestingSide, typename LevelsType>
+static MatchOutcome walk_overflow(LevelsType &levels, Price limit, auto &&visit) {
+    constexpr bool mutating = !std::is_const_v<levels>;
+
+    for (auto it = levels.begin(); it != levels.end();) {
+
+        auto &[price, level] = *it;
+        if (worse<RestingSide>(price, limit))
+            break;
+
+        const MatchOutcome outcome = visit(level, price);
+
+        if (constexpr mutating) {
+            if (level.head == invalid_index)
+                it = levels.erase(it);
+            else
+                ++it;
+        } else {
+            ++it;
+        }
+
+        if (outcome != MatchOutcome::Exhausted)
+            return outcome;
+    }
+
+    return MatchOutcome::Exhausted;
+}
+
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side AggressiveSide, bool StpActive>
-auto DenseLadderOrderBook<BandWidth, Hash>::match_better_overflow(Quantity &remaining,
-                                                                  const NewOrder &order,
-                                                                  TradeWriter &trade_writer,
-                                                                  std::uint32_t &trade_count)
+auto DenseLadderOrderBook<BandWidth, Hash>::match_overflow(OverflowLevels &levels,
+                                                           Quantity &remaining,
+                                                           const NewOrder &order,
+                                                           TradeWriter &trade_writer,
+                                                           std::uint32_t &trade_count)
     -> MatchOutcome {
 
     const Price order_price = order.price;
 
-    if constexpr (AggressiveSide == Side::Buy) {
-        for (auto it = asks_better_overflow_.begin(); it != asks_better_overflow_.end();) {
+    for (auto it = levels.begin(); it != levels.end();) {
 
-            auto &[price, level] = *it;
+        auto &[price, level] = *it;
 
-            if (order.order_type == OrderType::Limit && order_price < price)
+        if (order.order_type == OrderType::Limit && worse<AggressiveSide>(order_price, price))
+            break;
+
+        const MatchOutcome result = match_level<AggressiveSide, StpActive>(
+            level, remaining, price, order, trade_writer, trade_count);
+
+        if (level.head == invalid_index)
+            it = levels.erase(it);
+        else
+            ++it;
+
+        if (result != MatchOutcome::Exhausted)
+            return result;
+
+        return MatchOutcome::Exhausted;
+    }
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
+auto DenseLadderOrderBook<BandWidth, Hash>::scan_better_overflow(
+    const NewOrder &order, Quantity &remaining, const ExcludedOrder &excluded) const noexcept
+    -> ScanOutcome {
+
+    if constexpr (OppositeSide == Side::Buy) {
+        for (const auto &[price, level] : bids_better_overflow_) {
+            if (price < order.price)
                 break;
-
-            const MatchOutcome result = match_level<AggressiveSide, StpActive>(
-                level, remaining, price, order, trade_writer, trade_count);
-
-            if (level.head == invalid_index)
-                it = asks_better_overflow_.erase(it);
-            else
-                ++it;
-
-            if (result != MatchOutcome::Exhausted)
+            const ScanOutcome result =
+                scan_level<ExcludeOrder, StpActive>(level, price, order, remaining, excluded);
+            if (result != ScanOutcome::WillExhaust)
                 return result;
         }
-
     } else {
-        for (auto it = bids_better_overflow_.begin(); it != bids_better_overflow_.end();) {
 
-            auto &[price, level] = *it;
-
-            if (order.order_type == OrderType::Limit && order_price > price)
+        for (const auto &[price, level] : asks_better_overflow_) {
+            if (price > order.price)
                 break;
-
-            const MatchOutcome result = match_level<AggressiveSide, StpActive>(
-                level, remaining, price, order, trade_writer, trade_count);
-
-            if (level.head == invalid_index)
-                it = bids_better_overflow_.erase(it);
-            else
-                ++it;
-
-            if (result != MatchOutcome::Exhausted)
+            const ScanOutcome result =
+                scan_level<ExcludeOrder, StpActive>(level, price, order, remaining, excluded);
+            if (result != ScanOutcome::WillExhaust)
                 return result;
         }
     }
 
-    return MatchOutcome::Exhausted;
+    return ScanOutcome::WillExhaust;
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
@@ -353,64 +379,10 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_dense(Quantity &remaining, con
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side AggressiveSide, bool StpActive>
-auto DenseLadderOrderBook<BandWidth, Hash>::match_worse_overflow(Quantity &remaining,
-                                                                 const NewOrder &order,
-                                                                 TradeWriter &trade_writer,
-                                                                 std::uint32_t &trade_count)
-    -> MatchOutcome {
-
-    const Price order_price = order.price;
-
-    if constexpr (AggressiveSide == Side::Buy) {
-        for (auto it = asks_worse_overflow_.begin(); it != asks_worse_overflow_.end();) {
-            auto &[price, level] = *it;
-
-            if (order.order_type == OrderType::Limit && order_price < price)
-                break;
-
-            const MatchOutcome result = match_level<AggressiveSide, StpActive>(
-                level, remaining, price, order, trade_writer, trade_count);
-
-            if (level.head == invalid_index)
-                it = asks_worse_overflow_.erase(it);
-            else
-                ++it;
-
-            if (result != MatchOutcome::Exhausted)
-                return result;
-        }
-
-    } else {
-        for (auto it = bids_worse_overflow_.begin(); it != bids_worse_overflow_.end();) {
-            auto &[price, level] = *it;
-
-            if (order.order_type == OrderType::Limit && order_price > price)
-                break;
-
-            const MatchOutcome result = match_level<AggressiveSide, StpActive>(
-                level, remaining, price, order, trade_writer, trade_count);
-
-            if (level.head == invalid_index)
-                it = bids_worse_overflow_.erase(it);
-            else
-                ++it;
-
-            if (result != MatchOutcome::Exhausted)
-                return result;
-        }
-    }
-
-    return MatchOutcome::Exhausted;
-}
-
-template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-template <Side AggressiveSide, bool StpActive>
 MatchOutcome DenseLadderOrderBook<BandWidth, Hash>::match_order(Quantity &remaining,
                                                                 const NewOrder &order,
                                                                 TradeWriter &trade_writer,
                                                                 std::uint32_t &trade_count) {
-    if (resting_order_pool_head_ == invalid_index)
-        return MatchOutcome::None;
 
     MatchOutcome result = match_better_overflow<AggressiveSide, StpActive>(
         remaining, order, trade_writer, trade_count);
@@ -739,36 +711,6 @@ auto DenseLadderOrderBook<BandWidth, Hash>::scan_level(const Level &level, Price
             return ScanOutcome::WillFill;
 
         remaining -= available;
-    }
-
-    return ScanOutcome::WillExhaust;
-}
-
-template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
-template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
-auto DenseLadderOrderBook<BandWidth, Hash>::scan_better_overflow(
-    const NewOrder &order, Quantity &remaining, const ExcludedOrder &excluded) const noexcept
-    -> ScanOutcome {
-
-    if constexpr (OppositeSide == Side::Buy) {
-        for (const auto &[price, level] : bids_better_overflow_) {
-            if (price < order.price)
-                break;
-            const ScanOutcome result =
-                scan_level<ExcludeOrder, StpActive>(level, price, order, remaining, excluded);
-            if (result != ScanOutcome::WillExhaust)
-                return result;
-        }
-    } else {
-
-        for (const auto &[price, level] : asks_better_overflow_) {
-            if (price > order.price)
-                break;
-            const ScanOutcome result =
-                scan_level<ExcludeOrder, StpActive>(level, price, order, remaining, excluded);
-            if (result != ScanOutcome::WillExhaust)
-                return result;
-        }
     }
 
     return ScanOutcome::WillExhaust;

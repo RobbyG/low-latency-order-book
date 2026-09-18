@@ -41,4 +41,11 @@ enum class Side : std::uint8_t { Buy, Sell };
                     static_cast<Int128>(quantity.get_value()));
 }
 
+template <Side S> constexpr bool worse(Price a, Price b) noexcept {
+    if constexpr (AggressiveSide == Side::Buy)
+        return a < b;
+    else
+        return b < a;
+}
+
 } // namespace lob

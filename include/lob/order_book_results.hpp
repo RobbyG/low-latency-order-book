@@ -9,7 +9,6 @@
 namespace lob {
 
 enum class MatchOutcome : std::uint8_t {
-    None,
     Aborted,
     Filled,
     Exhausted,
