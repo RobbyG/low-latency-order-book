@@ -42,7 +42,7 @@ enum class Side : std::uint8_t { Buy, Sell };
 }
 
 template <Side S> constexpr bool worse(Price a, Price b) noexcept {
-    if constexpr (AggressiveSide == Side::Buy)
+    if constexpr (S == Side::Buy)
         return a < b;
     else
         return b < a;

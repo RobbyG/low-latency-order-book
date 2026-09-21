@@ -148,19 +148,12 @@ class DenseLadderOrderBook final {
                                            const NewOrder &order, TradeWriter &trade_writer,
                                            std::uint32_t &trade_count);
 
-    template <Side AggressiveSide, bool StpActive>
-    [[nodiscard]] MatchOutcome match_better_overflow(Quantity &remaining, const NewOrder &order,
-                                                     TradeWriter &trade_writer,
-                                                     std::uint32_t &trade_count);
+    template <Side RestingSide, typename LevelsType>
+    [[nodiscard]] static MatchOutcome walk_overflow(LevelsType &levels, Price limit, auto &&visit);
 
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_dense(Quantity &remaining, const NewOrder &order,
                                            TradeWriter &trade_writer, std::uint32_t &trade_count);
-
-    template <Side AggressiveSide, bool StpActive>
-    [[nodiscard]] MatchOutcome match_worse_overflow(Quantity &remaining, const NewOrder &order,
-                                                    TradeWriter &trade_writer,
-                                                    std::uint32_t &trade_count);
 
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_order(Quantity &remaining, const NewOrder &order,
@@ -190,14 +183,8 @@ class DenseLadderOrderBook final {
                                          const ExcludedOrder &excluded) const noexcept;
 
     template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
-    [[nodiscard]] ScanOutcome scan_better_overflow(const NewOrder &order, Quantity &remaining,
-                                                   const ExcludedOrder &excluded) const noexcept;
-    template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
     [[nodiscard]] ScanOutcome scan_dense(const NewOrder &order, Quantity &remaining,
                                          const ExcludedOrder &excluded) const noexcept;
-    template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
-    [[nodiscard]] ScanOutcome scan_worse_overflow(const NewOrder &order, Quantity &remaining,
-                                                  const ExcludedOrder &excluded) const noexcept;
 
     template <Side OppositeSide, bool StpActive>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order) const noexcept;
