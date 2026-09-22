@@ -108,6 +108,7 @@ class DenseLadderOrderBook final {
     Config config_;
 
     Price base_price_;
+    Price upper_price_;
 
     Levels bids_{};
     Levels asks_{};
@@ -151,9 +152,8 @@ class DenseLadderOrderBook final {
     template <Side RestingSide, typename LevelsType>
     [[nodiscard]] static MatchOutcome walk_overflow(LevelsType &levels, Price limit, auto &&visit);
 
-    template <Side AggressiveSide, bool StpActive>
-    [[nodiscard]] MatchOutcome match_dense(Quantity &remaining, const NewOrder &order,
-                                           TradeWriter &trade_writer, std::uint32_t &trade_count);
+    template <Side RestingSide, typename LevelsType>
+    [[nodiscard]] static MatchOutcome walk_dense(LevelsType &levels, Price limit, auto &&visit);
 
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_order(Quantity &remaining, const NewOrder &order,
@@ -172,18 +172,20 @@ class DenseLadderOrderBook final {
 
     [[nodiscard]] std::size_t find_id_entry(OrderId id) const noexcept;
 
-    [[nodiscard]] std::size_t previous_occupied_slot(const auto &occupied,
-                                                     std::size_t slot) const noexcept;
-    [[nodiscard]] std::size_t next_occupied_slot(const auto &occupied,
-                                                 std::size_t slot) const noexcept;
+    [[nodiscard]] static std::size_t lower_occupied_slot(const auto &occupied,
+                                                         std::size_t slot) noexcept;
+    [[nodiscard]] static std::size_t higher_occupied_slot(const auto &occupied,
+                                                          std::size_t slot) noexcept;
+
+    template <Side RestingSide> [[nodiscard]] std::size_t best_slot() const noexcept;
+
+    template <Side RestingSide>
+    [[nodiscard]] static std::size_t next_worse_dense_slot(const auto &occupied,
+                                                           std::size_t slot) noexcept;
 
     template <bool ExcludeOrder, bool StpActive>
     [[nodiscard]] ScanOutcome scan_level(const Level &level, Price level_price,
                                          const NewOrder &order, Quantity &remaining,
-                                         const ExcludedOrder &excluded) const noexcept;
-
-    template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
-    [[nodiscard]] ScanOutcome scan_dense(const NewOrder &order, Quantity &remaining,
                                          const ExcludedOrder &excluded) const noexcept;
 
     template <Side OppositeSide, bool StpActive>
