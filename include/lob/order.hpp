@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <type_traits>
+#include <utility>
 
 namespace lob {
 
@@ -53,5 +54,20 @@ struct NewOrder {
 static_assert(sizeof(NewOrder) == 32, "NewOrder must be 32 bytes in size");
 static_assert(std::is_trivially_copyable_v<NewOrder>,
               "NewOrder must be trivially copyable for buffer ring usage");
+
+[[nodiscard]] constexpr Price effective_limit(const NewOrder &order) noexcept {
+    switch (order.order_type) {
+    case OrderType::Limit:
+        return order.price;
+    case OrderType::Market:
+        return order.side == Side::Buy ? max_price : min_price;
+    }
+    std::unreachable();
+}
+
+static_assert(effective_limit(NewOrder{.side = Side::Buy, .order_type = OrderType::Market}) ==
+              max_price);
+static_assert(effective_limit(NewOrder{.side = Side::Sell, .order_type = OrderType::Market}) ==
+              min_price);
 
 } // namespace lob

@@ -3,6 +3,7 @@
 #include <lob/strong_types.hpp>
 
 #include <cstdint>
+#include <limits>
 
 namespace lob {
 
@@ -20,6 +21,9 @@ using StpId = IdType<std::uint32_t, tag::StpId>;
 
 using Price = Scalar<std::int64_t, tag::Price>;
 using Quantity = Scalar<std::uint64_t, tag::Quantity>;
+
+inline constexpr Price max_price{std::numeric_limits<std::int64_t>::max()};
+inline constexpr Price min_price{std::numeric_limits<std::int64_t>::min()};
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
@@ -41,7 +45,7 @@ enum class Side : std::uint8_t { Buy, Sell };
                     static_cast<Int128>(quantity.get_value()));
 }
 
-template <Side S> constexpr bool worse(Price a, Price b) noexcept {
+template <Side S, std::totally_ordered T> constexpr bool worse(T a, T b) noexcept {
     if constexpr (S == Side::Buy)
         return a < b;
     else

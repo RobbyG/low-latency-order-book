@@ -153,7 +153,9 @@ class DenseLadderOrderBook final {
     [[nodiscard]] static MatchOutcome walk_overflow(LevelsType &levels, Price limit, auto &&visit);
 
     template <Side RestingSide, typename LevelsType>
-    [[nodiscard]] static MatchOutcome walk_dense(LevelsType &levels, Price limit, auto &&visit);
+    [[nodiscard]] static MatchOutcome walk_dense(LevelsType &levels, auto &occupied,
+                                                 auto &best_slot, Price base, Price limit,
+                                                 auto &&visit);
 
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_order(Quantity &remaining, const NewOrder &order,
