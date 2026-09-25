@@ -157,12 +157,25 @@ class DenseLadderOrderBook final {
                                                  auto &best_slot, Price base, Price limit,
                                                  auto &&visit);
 
+    template <Side RestingSide> MatchOutcome walk_side(this auto &self, Price limit, auto &&visit);
+
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_order(Quantity &remaining, const NewOrder &order,
                                            TradeWriter &trade_writer, std::uint32_t &trade_count);
 
-    template <Side AggressiveSide, bool StpActive>
-    [[nodiscard]] bool rest_order(const NewOrder &order);
+    void append_to_level(Level &level, std::uint32_t node_index, Quantity quantity) noexcept;
+
+    template <Side RestingSide>
+    void rest_overflow(OverflowLevels &levels, Price price, std::uint32_t node_index,
+                       Quantity quantity);
+
+    template <Side RestingSide>
+    void rest_dense(Levels &levels, Occupancy &occupied, std::size_t &best_slot, Price price,
+                    std::uint32_t node_index, Quantity quantity) noexcept;
+
+    template <Side RestingSide>
+    [[nodiscard]] AddResult rest_order(Quantity remaining, const NewOrder &order,
+                                       std::uint32_t trade_count);
 
     [[nodiscard]] static constexpr std::size_t price_diff_to_size_t(Price price,
                                                                     Price base) noexcept {
@@ -174,15 +187,15 @@ class DenseLadderOrderBook final {
 
     [[nodiscard]] std::size_t find_id_entry(OrderId id) const noexcept;
 
-    [[nodiscard]] static std::size_t lower_occupied_slot(const auto &occupied,
+    [[nodiscard]] static std::size_t lower_occupied_slot(const Occupancy &occupied,
                                                          std::size_t slot) noexcept;
-    [[nodiscard]] static std::size_t higher_occupied_slot(const auto &occupied,
+    [[nodiscard]] static std::size_t higher_occupied_slot(const Occupancy &occupied,
                                                           std::size_t slot) noexcept;
 
     template <Side RestingSide> [[nodiscard]] std::size_t best_slot() const noexcept;
 
     template <Side RestingSide>
-    [[nodiscard]] static std::size_t next_worse_dense_slot(const auto &occupied,
+    [[nodiscard]] static std::size_t next_worse_dense_slot(const Occupancy &occupied,
                                                            std::size_t slot) noexcept;
 
     template <bool ExcludeOrder, bool StpActive>
@@ -190,9 +203,12 @@ class DenseLadderOrderBook final {
                                          const NewOrder &order, Quantity &remaining,
                                          const ExcludedOrder &excluded) const noexcept;
 
-    template <Side OppositeSide, bool StpActive>
+    template <Side RestingSide, bool StpActive>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order) const noexcept;
-    template <Side OppositeSide, bool ExcludeOrder, bool StpActive>
+    template <Side RestingSide
+
+                  tj tyjtyj tdyjtyj,
+              bool ExcludeOrder, bool StpActive>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order,
                                        std::size_t excluded_slot) const noexcept;
 
