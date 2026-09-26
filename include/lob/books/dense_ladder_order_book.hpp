@@ -146,8 +146,7 @@ class DenseLadderOrderBook final {
 
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_level(Level &level, Quantity &remaining, Price level_price,
-                                           const NewOrder &order, TradeWriter &trade_writer,
-                                           std::uint32_t &trade_count);
+                                           const NewOrder &order, TradeWriter &trade_writer);
 
     template <Side RestingSide, typename LevelsType>
     [[nodiscard]] static MatchOutcome walk_overflow(LevelsType &levels, Price limit, auto &&visit);
@@ -161,7 +160,7 @@ class DenseLadderOrderBook final {
 
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_order(Quantity &remaining, const NewOrder &order,
-                                           TradeWriter &trade_writer, std::uint32_t &trade_count);
+                                           TradeWriter &trade_writer);
 
     void append_to_level(Level &level, std::uint32_t node_index, Quantity quantity) noexcept;
 
@@ -174,8 +173,7 @@ class DenseLadderOrderBook final {
                     std::uint32_t node_index, Quantity quantity) noexcept;
 
     template <Side RestingSide>
-    [[nodiscard]] AddResult rest_order(Quantity remaining, const NewOrder &order,
-                                       std::uint32_t trade_count);
+    [[nodiscard]] AddResult rest_order(Quantity remaining, const NewOrder &order);
 
     [[nodiscard]] static constexpr std::size_t price_diff_to_size_t(Price price,
                                                                     Price base) noexcept {

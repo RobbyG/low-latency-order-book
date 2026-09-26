@@ -23,25 +23,33 @@ template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 AddResult DenseLadderOrderBook<BandWidth, Hash>::add_order(const NewOrder &order,
                                                            TradeWriter &trade_writer) {
     assert(order.quantity != Quantity{0} && "Order cannot have a quantity of 0");
+
+    Quantity remaining = order.quantity;
+
     // validate
     AddStatus status = validate_new_order(order);
     if (status != AddStatus::Accepted) {
-        return AddResult{.remaining = order.quantity,
-                         .trade_count = 0,
-                         .status = status,
-                         .outcome = MatchOutcome::None};
+        return AddResult{
+            .remaining = order.quantity, .status = status, .outcome = MatchOutcome::None};
     }
+
     // match
+    MatchOutcome match_outcome;
     if (order.side == Side::Buy)
-        result = order.stp_id != StpId{0} ? match_order<Side::Buy, true>(order, trade_writer)
-                                          : match_order<Side::Buy, false>(order, trade_writer);
+        match_outcome = order.stp_id != StpId{0}
+                            ? match_order<Side::Buy, true>(remaining, order, trade_writer)
+                            : match_order<Side::Buy, false>(remaining, order, trade_writer);
     else
-        result = order.stp_id != StpId{0} ? match_order<Side::Sell, true>(order, trade_writer)
-                                          : match_order<Side::Sell, false>(order, trade_writer);
+        match_outcome = order.stp_id != StpId{0}
+                            ? match_order<Side::Sell, true>(remaining, order, trade_writer)
+                            : match_order<Side::Sell, false>(remaining, order, trade_writer);
 
     // rest if required
     AddResult result;
-    return result;
+
+    if (match_outcome)
+
+        return result;
 }
 
 // private functions
@@ -131,9 +139,7 @@ template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side AggressiveSide, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &remaining,
                                                         Price level_price, const NewOrder &order,
-                                                        TradeWriter &trade_writer,
-                                                        std::uint32_t &trade_count)
-    -> MatchOutcome {
+                                                        TradeWriter &trade_writer) -> MatchOutcome {
 
     bool emit_trade;
     if (level.head == invalid_index)
@@ -179,7 +185,6 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
                                   .aggressive_side = AggressiveSide};
 
                 trade_writer.on_trade(trade);
-                ++trade_count;
             }
         } else {
             level.total_quantity -= remaining;
@@ -191,7 +196,6 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
                                   .aggressive_side = AggressiveSide};
 
                 trade_writer.on_trade(trade);
-                ++trade_count;
             }
             node.quantity -= remaining;
             remaining = Quantity{0};
@@ -306,16 +310,14 @@ template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side AggressiveSide, bool StpActive>
 MatchOutcome DenseLadderOrderBook<BandWidth, Hash>::match_order(Quantity &remaining,
                                                                 const NewOrder &order,
-                                                                TradeWriter &trade_writer,
-                                                                std::uint32_t &trade_count) {
+                                                                TradeWriter &trade_writer) {
 
     Price limit = effective_limit(order);
 
     constexpr Side RestingSide = AggressiveSide == Side::Buy ? Side::Sell : Side::Buy;
 
     auto visit = [&](Level &level, Price price) {
-        return match_level<AggressiveSide, StpActive>(level, remaining, price, order, trade_writer,
-                                                      trade_count);
+        return match_level<AggressiveSide, StpActive>(level, remaining, price, order, trade_writer);
     };
 
     return walk_side<RestingSide>(limit, visit);
@@ -375,17 +377,13 @@ void DenseLadderOrderBook<BandWidth, Hash>::rest_dense(Levels &levels, Occupancy
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side RestingSide>
 AddResult DenseLadderOrderBook<BandWidth, Hash>::rest_order(Quantity remaining,
-                                                            const NewOrder &order,
-                                                            std::uint32_t trade_count) {
+                                                            const NewOrder &order) {
 
     assert(order.order_type == OrderType::Limit && "only limit orders rest");
 
     if (resting_order_pool_head_ == invalid_index) {
-        assert(trade_count == 0 && "BookFull implies nothing traded");
-        return AddResult{.remaining = remaining,
-                         .trade_count = 0,
-                         .status = AddStatus::BookFull,
-                         .outcome = MatchOutcome::None};
+        return AddResult{
+            .remaining = remaining, .status = AddStatus::BookFull, .outcome = MatchOutcome::None};
     }
 
     const Price price = order.price;

@@ -220,10 +220,8 @@ AddResult MapListOrderBook::add_order(const NewOrder &order, TradeWriter &trade_
 
     const AddStatus status = validate_new_order(order);
     if (status != AddStatus::Accepted) {
-        return AddResult{.remaining = order.quantity,
-                         .trade_count = 0,
-                         .status = status,
-                         .outcome = MatchOutcome::None};
+        return AddResult{
+            .remaining = order.quantity, .status = status, .outcome = MatchOutcome::Aborted};
     }
 
     return add_validated_order(order, trade_writer);
@@ -284,23 +282,20 @@ ReplaceResult MapListOrderBook::replace_order(OrderId id, const NewOrder &order,
     if (index_it == order_index_.end()) {
         // order does not exist
         return ReplaceResult{.remaining = Quantity{0},
-                             .trade_count = 0,
                              .status = ReplaceStatus::NotFound,
-                             .outcome = MatchOutcome::None};
+                             .outcome = MatchOutcome::Aborted};
     }
 
     const AddStatus status = validate_new_replace_order(order, id);
     if (status != AddStatus::Accepted) {
         return ReplaceResult{.remaining = index_it->second.it->quantity,
-                             .trade_count = 0,
                              .status = lob::detail::to_replace_status(status),
-                             .outcome = MatchOutcome::None};
+                             .outcome = MatchOutcome::Aborted};
     }
 
     erase_resting(index_it);
     AddResult result = add_validated_order(order, trade_writer);
     return ReplaceResult{.remaining = result.remaining,
-                         .trade_count = result.trade_count,
                          .status = lob::detail::to_replace_status(result.status),
                          .outcome = result.outcome};
 }
@@ -446,7 +441,6 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
     const auto comparator = opposite_levels.key_comp();
     auto level_it = opposite_levels.begin();
     Quantity remaining = order.quantity;
-    std::uint32_t trade_count = 0;
 
     const OrderId aggressive_id = order.id;
     const Price aggressive_price = order.price;
@@ -484,13 +478,11 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
                     }
 
                     return AddResult{.remaining = remaining,
-                                     .trade_count = trade_count,
                                      .status = AddStatus::Accepted,
                                      .outcome = MatchOutcome::STPCancelBoth};
 
                 case SelfTradeResolve::CancelNew:
                     return AddResult{.remaining = remaining,
-                                     .trade_count = trade_count,
                                      .status = AddStatus::Accepted,
                                      .outcome = MatchOutcome::STPCancelNew};
 
@@ -516,7 +508,6 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
                                   .quantity = trade_quantity,
                                   .aggressive_side = aggressive_side};
                 trade_writer.on_trade(trade);
-                ++trade_count;
             }
             remaining -= trade_quantity;
             resting_it->quantity -= trade_quantity;
@@ -586,10 +577,7 @@ AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
         }
     }
 
-    return AddResult{.remaining = remaining,
-                     .trade_count = trade_count,
-                     .status = AddStatus::Accepted,
-                     .outcome = outcome};
+    return AddResult{.remaining = remaining, .status = AddStatus::Accepted, .outcome = outcome};
 }
 
 bool MapListOrderBook::can_fully_fill(const NewOrder &order) const noexcept {
