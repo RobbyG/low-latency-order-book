@@ -144,6 +144,8 @@ class DenseLadderOrderBook final {
 
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
 
+    [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
+
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_level(Level &level, Quantity &remaining, Price level_price,
                                            const NewOrder &order, TradeWriter &trade_writer);
@@ -197,9 +199,9 @@ class DenseLadderOrderBook final {
                                                            std::size_t slot) noexcept;
 
     template <bool ExcludeOrder, bool StpActive>
-    [[nodiscard]] ScanOutcome scan_level(const Level &level, Price level_price,
-                                         const NewOrder &order, Quantity &remaining,
-                                         const ExcludedOrder &excluded) const noexcept;
+    [[nodiscard]] MatchOutcome scan_level(const Level &level, Price level_price,
+                                          const NewOrder &order, Quantity &remaining,
+                                          const ExcludedOrder &excluded) const noexcept;
 
     template <Side RestingSide, bool StpActive>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order) const noexcept;

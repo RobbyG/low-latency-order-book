@@ -22,34 +22,24 @@ DenseLadderOrderBook<BandWidth, Hash>::DenseLadderOrderBook(Config config) : con
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 AddResult DenseLadderOrderBook<BandWidth, Hash>::add_order(const NewOrder &order,
                                                            TradeWriter &trade_writer) {
-    assert(order.quantity != Quantity{0} && "Order cannot have a quantity of 0");
+    assert(order.quantity != Quantity{0} && "a new order cannot have a quantity of 0");
 
-    Quantity remaining = order.quantity;
-
-    // validate
     AddStatus status = validate_new_order(order);
     if (status != AddStatus::Accepted) {
         return AddResult{
             .remaining = order.quantity, .status = status, .outcome = MatchOutcome::None};
     }
 
-    // match
-    MatchOutcome match_outcome;
-    if (order.side == Side::Buy)
-        match_outcome = order.stp_id != StpId{0}
-                            ? match_order<Side::Buy, true>(remaining, order, trade_writer)
-                            : match_order<Side::Buy, false>(remaining, order, trade_writer);
-    else
-        match_outcome = order.stp_id != StpId{0}
-                            ? match_order<Side::Sell, true>(remaining, order, trade_writer)
-                            : match_order<Side::Sell, false>(remaining, order, trade_writer);
+    return add_validated_order(order, trade_writer);
+}
 
-    // rest if required
-    AddResult result;
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+CancelResult DenseLadderOrderBook<BandWidth, Hash>::cancel_order(OrderId id) noexcept {
+    const std::size_t slot = find_id_entry(id);
+    if (slot == invalid_index)
+        return CancelResult{.quantity = Quantity{0}, .status = CancelStatus::NotFound};
 
-    if (match_outcome)
-
-        return result;
+    order_index_[slot].node_index = invalid_index;
 }
 
 // private functions
@@ -136,6 +126,41 @@ DenseLadderOrderBook<BandWidth, Hash>::validate_new_order(const NewOrder &order)
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+AddResult DenseLadderOrderBook<BandWidth, Hash>::add_validated_order(const NewOrder &order,
+                                                                     TradeWriter &trade_writer) {
+    Quantity remaining = order.quantity;
+    MatchOutcome match_outcome;
+    if (order.side == Side::Buy)
+        match_outcome = order.stp_id != StpId{0}
+                            ? match_order<Side::Buy, true>(remaining, order, trade_writer)
+                            : match_order<Side::Buy, false>(remaining, order, trade_writer);
+    else
+        match_outcome = order.stp_id != StpId{0}
+                            ? match_order<Side::Sell, true>(remaining, order, trade_writer)
+                            : match_order<Side::Sell, false>(remaining, order, trade_writer);
+
+    switch (match_outcome) {
+    case MatchOutcome::Filled:
+        assert(remaining == Quantity{0} && "Filled implies remaining quantity should be 0");
+        return AddResult{.remaining = Quantity{0},
+                         .status = AddStatus::Accepted,
+                         .outcome = MatchOutcome::Filled};
+    case MatchOutcome::Exhausted:
+        if (order.order_type == OrderType::Limit && order.time_in_force != TimeInForce::Fok &&
+            order.time_in_force != TimeInForce::Ioc)
+            return order.side == Side::Buy ? rest_order<Side::Buy>(remaining, order)
+                                           : rest_order<Side::Sell>(remaining, order);
+        [[fallthrough]];
+    case MatchOutcome::Aborted:
+        return AddResult{.remaining = remaining,
+                         .status = AddStatus::RemainderCancelled,
+                         .outcome = match_outcome};
+    }
+
+    std::unreachable();
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side AggressiveSide, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &remaining,
                                                         Price level_price, const NewOrder &order,
@@ -174,9 +199,9 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
 
         if (remaining >= node.quantity) {
             remaining -= node.quantity;
-            remove_resting_order(
-                level, node,
-                node_index_copy); // includes removing the quantity from the level.total_quantity
+            remove_resting_order(level, node,
+                                 node_index_copy); // includes removing the quantity from the
+                                                   // level.total_quantity
             if (emit_trade) {
                 const Trade trade{.aggressive_order_id = order.id,
                                   .resting_order_id = node.id,
@@ -390,9 +415,9 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::rest_order(Quantity remaining,
     const std::uint32_t new_node_index = resting_order_pool_head_;
 
     const std::size_t slot = probe_slot(order.id);
-    assert(
-        order_index_[slot].node_index == invalid_index &&
-        "has to be invalid_index otherwise duplicate found which should be rejected at validation");
+    assert(order_index_[slot].node_index == invalid_index &&
+           "has to be invalid_index otherwise duplicate found which should be rejected at "
+           "validation");
     order_index_[slot] =
         IdEntry{.id = order.id, .price = price, .node_index = new_node_index, .side = RestingSide};
 
@@ -421,10 +446,8 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::rest_order(Quantity remaining,
         rest(asks_worse_overflow_, asks_, asks_occupied_, asks_better_overflow_, best_ask_slot_);
     }
 
-    return AddResult{.remaining = remaining,
-                     .trade_count = trade_count,
-                     .status = AddStatus::Rested,
-                     .outcome = MatchOutcome::Exhausted};
+    return AddResult{
+        .remaining = remaining, .status = AddStatus::Rested, .outcome = MatchOutcome::Exhausted};
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
@@ -518,7 +541,7 @@ template <bool ExcludeOrder, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::scan_level(const Level &level, Price level_price,
                                                        const NewOrder &order, Quantity &remaining,
                                                        const ExcludedOrder &excluded) const noexcept
-    -> ScanOutcome {
+    -> MatchOutcome {
     if constexpr (StpActive) {
         const StpId stp_id = order.stp_id;
         const SelfTradeResolve stp_policy = order.self_trade_resolve;

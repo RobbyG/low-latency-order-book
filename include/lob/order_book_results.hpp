@@ -32,7 +32,6 @@ enum class AddStatus : std::uint8_t {
 
 struct AddResult {
     Quantity remaining;
-    std::uint32_t trade_count;
     AddStatus status;
     MatchOutcome outcome;
 
@@ -87,7 +86,6 @@ enum class ReplaceStatus : std::uint8_t {
 
 struct ReplaceResult {
     Quantity remaining;
-    std::uint32_t trade_count;
     ReplaceStatus status;
     MatchOutcome outcome;
 
