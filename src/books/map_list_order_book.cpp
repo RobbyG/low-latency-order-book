@@ -259,7 +259,7 @@ ReduceResult MapListOrderBook::reduce_order_by(OrderId id, Quantity quantity) no
         // quantity with which to reduce is larger than resting quantity
         return ReduceResult{.old_quantity = resting,
                             .new_quantity = resting,
-                            .status = ReduceStatus::InvalidQuantity};
+                            .status = ReduceStatus::ExceedsRestingQuantity};
     }
 
     if (resting == quantity) {

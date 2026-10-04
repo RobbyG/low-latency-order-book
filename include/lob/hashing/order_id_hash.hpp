@@ -2,6 +2,7 @@
 
 #include <lob/domain_types.hpp>
 
+#include <cassert>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -29,11 +30,12 @@ struct IdentityHash {
 
 struct FibonacciHash {
     [[nodiscard]] static constexpr std::uint64_t operator()(OrderId id) noexcept {
-        return static_cast<std::uint64_t>(id.get_value() * 0x9E3779B97F4A7C15ULL);
+        return id.get_value() * 0x9E3779B97F4A7C15ULL;
     }
 
     [[nodiscard]] static constexpr std::size_t hash_into_slot(OrderId id, std::size_t,
                                                               unsigned shift) noexcept {
+        assert(shift < 64);
         return (FibonacciHash{}(id)) >> shift;
     }
 };

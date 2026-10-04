@@ -133,11 +133,27 @@ class DenseLadderOrderBook final {
 
     std::vector<IdEntry> order_index_;
     std::size_t order_index_mask_{};
-    std::size_t order_index_shift_{};
+    unsigned order_index_shift_{};
 
     void reserve(const Config &config);
 
+    void erase_slot_from_order_index(std::size_t slot) noexcept;
+
+    void cancel_order(std::size_t order_index_slot) noexcept;
+
     bool remove_from_order_index(OrderId id) noexcept;
+
+    template <Side RestingSide> [[nodiscard]] Level &get_level(Price price) noexcept;
+
+    template <Side RestingSide> decltype(auto) with_side(auto &&f) {
+        if constexpr (RestingSide == Side::Buy)
+            f(bids_better_overflow_, bids_, bids_occupied_, bids_worse_overflow_, best_bid_slot_);
+        else
+            f(asks_better_overflow_, asks_, asks_occupied_, asks_worse_overflow_, best_ask_slot_);
+    }
+
+    template <Side RestingSide>
+    void remove_resting_at(Price price, std::uint32_t resting_index) noexcept;
 
     void remove_resting_order(Level &level, RestingOrderNode &node,
                               std::uint32_t node_index) noexcept;
@@ -181,6 +197,13 @@ class DenseLadderOrderBook final {
                                                                     Price base) noexcept {
         assert(price >= base);
         return static_cast<std::size_t>((price - base).get_value());
+    }
+
+    static void set_occupied(Occupancy &occupied, std::size_t slot) noexcept {
+        occupied[slot >> 6] |= std::uint64_t{1} << (slot & 63);
+    }
+    static void clear_occupied(Occupancy &occupied, std::size_t slot) noexcept {
+        occupied[slot >> 6] &= ~(std::uint64_t{1} << (slot & 63));
     }
 
     [[nodiscard]] std::size_t probe_slot(OrderId) const noexcept;

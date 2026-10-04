@@ -9,15 +9,10 @@
 namespace lob {
 
 enum class MatchOutcome : std::uint8_t {
+    None,
     Aborted,
     Filled,
     Exhausted,
-};
-
-enum class ScanOutcome : std::uint8_t {
-    WillAbort,
-    WillFill,
-    WillExhaust,
 };
 
 enum class AddStatus : std::uint8_t {
@@ -58,7 +53,7 @@ struct CancelResult {
 };
 static_assert(sizeof(CancelResult) <= 16, "CancelResult size must be <= 16 bytes");
 
-enum class ReduceStatus : std::uint8_t { Reduced, Cancelled, NotFound, InvalidQuantity };
+enum class ReduceStatus : std::uint8_t { Reduced, Cancelled, NotFound, ExceedsRestingQuantity };
 
 struct ReduceResult {
     Quantity old_quantity;
