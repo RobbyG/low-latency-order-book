@@ -23,6 +23,8 @@ enum class AddStatus : std::uint8_t {
     DuplicateOrderId,
     BookFull,
     WouldNotFullyFill,
+
+    NotAttempted,
 };
 
 struct AddResult {
@@ -41,7 +43,12 @@ struct AddResult {
 
 static_assert(sizeof(AddResult) <= 16, "AddResult size must be <= 16 bytes");
 
-enum class CancelStatus : std::uint8_t { Cancelled, NotFound };
+enum class CancelStatus : std::uint8_t {
+    Cancelled,
+    NotFound,
+
+    NotAttempted,
+};
 
 struct CancelResult {
     Quantity quantity;
@@ -67,35 +74,22 @@ struct ReduceResult {
 };
 static_assert(sizeof(ReduceResult) <= 24, "ReduceResult size must be <= 24 bytes");
 
-enum class ReplaceStatus : std::uint8_t {
-    Replaced,
-    Rested,
-    RemainderCancelled,
-
-    NotFound,
-
-    DuplicateOrderId,
-    BookFull,
-    WouldNotFullyFill,
-};
-
 struct ReplaceResult {
-    Quantity remaining;
-    ReplaceStatus status;
+
+    Quantity new_quantity;
+    CancelStatus cancel_status;
+    AddStatus add_status;
     MatchOutcome outcome;
 
     [[nodiscard]] bool replaced() const noexcept {
-        return status == ReplaceStatus::Replaced;
+        return cancel_status == CancelStatus::Cancelled && add_status == AddStatus::Accepted;
     }
 
     [[nodiscard]] bool rested() const noexcept {
-        return replaced() && remaining.get_value() != 0;
-    }
-
-    [[nodiscard]] bool failed() const noexcept {
-        return !replaced();
+        return replaced() && new_quantity != Quantity{0};
     }
 };
+
 static_assert(sizeof(ReplaceResult) == 16, "ReplaceResult size must be 16 bytes");
 
 struct CopyResult {
@@ -134,32 +128,5 @@ struct OrderView {
     TimeInForce time_in_force;
 };
 static_assert(sizeof(OrderView) == 32, "OrderView size must be 32 bytes");
-
-namespace detail {
-[[nodiscard]] static constexpr ReplaceStatus to_replace_status(AddStatus status) noexcept {
-    switch (status) {
-    case AddStatus::Accepted:
-        return ReplaceStatus::Replaced;
-
-    case AddStatus::Rested:
-        return ReplaceStatus::Rested;
-
-    case AddStatus::RemainderCancelled:
-        return ReplaceStatus::RemainderCancelled;
-
-    case AddStatus::DuplicateOrderId:
-        return ReplaceStatus::DuplicateOrderId;
-
-    case AddStatus::BookFull:
-        return ReplaceStatus::BookFull;
-
-    case AddStatus::WouldNotFullyFill:
-        return ReplaceStatus::WouldNotFullyFill;
-    }
-
-    std::unreachable();
-}
-
-} // namespace detail
 
 } // namespace lob
