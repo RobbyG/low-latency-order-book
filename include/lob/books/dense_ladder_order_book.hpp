@@ -38,7 +38,7 @@ class DenseLadderOrderBook final {
     DenseLadderOrderBook &operator=(DenseLadderOrderBook &&) = delete;
 
     [[nodiscard]] AddResult add_order(const NewOrder &order, TradeWriter &trade_writer);
-    [[nodiscard]] CancelResult cancel_order_at_slot(OrderId id) noexcept;
+    [[nodiscard]] CancelResult cancel_order(OrderId id) noexcept;
     [[nodiscard]] ReduceResult reduce_order_by(OrderId id, Quantity quantity) noexcept;
     [[nodiscard]] ReplaceResult replace_order(OrderId id, const NewOrder &order,
                                               TradeWriter &trade_writer);
@@ -94,12 +94,6 @@ class DenseLadderOrderBook final {
         Side side;
     };
     static_assert(sizeof(IdEntry) == 24, "IdEntry must be 24 bytes in size");
-
-    struct ExcludedOrder {
-        std::uint32_t node_index{invalid_index};
-        Price price{};
-        Quantity quantity{};
-    };
 
     using Levels = std::array<Level, BandWidth>;
     using Occupancy = std::array<std::uint64_t, (BandWidth + 63) / 64>;
@@ -165,7 +159,8 @@ class DenseLadderOrderBook final {
     void remove_resting_order(Level &level, RestingOrderNode &node,
                               std::uint32_t node_index) noexcept;
 
-    [[nodiscard]] AddStatus validate_new_order(const NewOrder &order) const noexcept;
+    [[nodiscard]] AddStatus validate_new_order(const NewOrder &order,
+                                               bool check_duplicate) const noexcept;
 
     [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
 
@@ -232,23 +227,15 @@ class DenseLadderOrderBook final {
     [[nodiscard]] static std::size_t next_worse_dense_slot(const Occupancy &occupied,
                                                            std::size_t slot) noexcept;
 
-    template <bool ExcludeOrder, bool StpActive>
+    template <bool StpActive>
     [[nodiscard]] MatchOutcome scan_level(const Level &level, Price level_price,
-                                          const NewOrder &order, Quantity &remaining,
-                                          const ExcludedOrder &excluded) const noexcept;
+                                          const NewOrder &order,
+                                          Quantity &remaining) const noexcept;
 
     template <Side RestingSide, bool StpActive>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order) const noexcept;
-    template <Side RestingSide
-
-                  tj tyjtyj tdyjtyj,
-              bool ExcludeOrder, bool StpActive>
-    [[nodiscard]] bool can_fill_levels(const NewOrder &order,
-                                       std::size_t excluded_slot) const noexcept;
 
     [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
-    [[nodiscard]] bool can_fully_fill(const NewOrder &order,
-                                      std::size_t excluded_slot) const noexcept;
 };
 
 } // namespace books
