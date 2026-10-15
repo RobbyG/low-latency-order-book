@@ -148,9 +148,11 @@ class DenseLadderOrderBook final {
 
     template <Side RestingSide> decltype(auto) with_side(auto &&f) {
         if constexpr (RestingSide == Side::Buy)
-            f(bids_better_overflow_, bids_, bids_occupied_, bids_worse_overflow_, best_bid_slot_);
+            return f(bids_better_overflow_, bids_, bids_occupied_, bids_worse_overflow_,
+                     best_bid_slot_);
         else
-            f(asks_better_overflow_, asks_, asks_occupied_, asks_worse_overflow_, best_ask_slot_);
+            return f(asks_better_overflow_, asks_, asks_occupied_, asks_worse_overflow_,
+                     best_ask_slot_);
     }
 
     template <Side RestingSide>
