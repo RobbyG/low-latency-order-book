@@ -57,10 +57,6 @@ class DenseLadderOrderBook final {
     [[nodiscard]] CopyResult copy_orders_at_price(Side side, Price price,
                                                   std::span<OrderView> out) const noexcept;
 
-    [[nodiscard]] bool empty() const noexcept;
-    [[nodiscard]] std::uint32_t order_count() const noexcept;
-    [[nodiscard]] std::uint32_t price_level_count(Side side) const noexcept;
-
     void reset() noexcept;
 
   private:
@@ -129,6 +125,13 @@ class DenseLadderOrderBook final {
     std::size_t order_index_mask_{};
     unsigned order_index_shift_{};
 
+    template <Side S> [[nodiscard]] bool best_level(PriceQuantity &pq) const noexcept;
+
+    template <Side S>
+    [[nodiscard]] CopyResult copy_levels(std::span<PriceLevel> out) const noexcept;
+
+    template <Side S> [[nodiscard]] std::uint64_t level_count() const noexcept;
+
     void reserve(const Config &config);
 
     void erase_slot_from_order_index(std::size_t slot) noexcept;
@@ -146,13 +149,13 @@ class DenseLadderOrderBook final {
 
     template <Side RestingSide> [[nodiscard]] Level &get_level(Price price) noexcept;
 
-    template <Side RestingSide> decltype(auto) with_side(auto &&f) {
+    template <Side RestingSide> decltype(auto) with_side(this auto &self, auto &&f) {
         if constexpr (RestingSide == Side::Buy)
-            return f(bids_better_overflow_, bids_, bids_occupied_, bids_worse_overflow_,
-                     best_bid_slot_);
+            return f(self.bids_better_overflow_, self.bids_, self.bids_occupied_,
+                     self.bids_worse_overflow_, bself.est_bid_slot_);
         else
-            return f(asks_better_overflow_, asks_, asks_occupied_, asks_worse_overflow_,
-                     best_ask_slot_);
+            return f(self.asks_better_overflow_, self.asks_, self.asks_occupied_,
+                     self.asks_worse_overflow_, self.best_ask_slot_);
     }
 
     template <Side RestingSide>

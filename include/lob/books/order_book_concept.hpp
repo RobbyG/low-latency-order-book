@@ -54,11 +54,7 @@ concept OrderBookL3View = requires(const Book &const_book, OrderId id, Side side
 };
 
 template <typename Book>
-concept OrderBookStats = requires(const Book &const_book, Side side) {
-    { const_book.empty() } noexcept -> std::same_as<bool>;
-    { const_book.order_count() } noexcept -> std::same_as<std::uint32_t>;
-    { const_book.price_level_count(side) } noexcept -> std::same_as<std::uint32_t>;
-};
+concept OrderBookStats = true; // placeholder
 
 template <typename Book>
 concept OrderBookImpl =

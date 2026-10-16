@@ -16,17 +16,20 @@
 namespace lob::books {
 
 // construction
+
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 DenseLadderOrderBook<BandWidth, Hash>::DenseLadderOrderBook(Config config) : config_(config) {
     reserve(config_);
 }
+
+// API
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 AddResult DenseLadderOrderBook<BandWidth, Hash>::add_order(const NewOrder &order,
                                                            TradeWriter &trade_writer) {
     assert(order.quantity != Quantity{0} && "a new order cannot have a quantity of 0");
 
-    AddStatus status = validate_new_order(order);
+    AddStatus status = validate_new_order(order, true);
     if (status != AddStatus::Accepted) {
         return AddResult{
             .remaining = order.quantity, .status = status, .outcome = MatchOutcome::None};
@@ -54,7 +57,7 @@ ReduceResult DenseLadderOrderBook<BandWidth, Hash>::reduce_order_by(OrderId id,
 
     const Quantity local_quantity = quantity;
 
-    assert(local_quantity > 0 && "the quantity to reduce by must be greater than 0");
+    assert(local_quantity > Quantity{0} && "the quantity to reduce by must be greater than 0");
     const std::size_t slot = find_id_entry(id);
     if (slot == invalid_index)
         return ReduceResult{.new_quantity = Quantity{0},
@@ -101,7 +104,9 @@ ReplaceResult DenseLadderOrderBook<BandWidth, Hash>::replace_order(OrderId id,
                              .cancel_status = CancelStatus::NotFound,
                              .outcome = MatchOutcome::None};
 
-    AddStatus add_status = validate_new_order<true>(order, order.id != id);
+    // if we replace with same id, skip duplicate check in validation as it will always find a
+    // duplicate and fail the validation (the old order will be removed anyway)
+    AddStatus add_status = validate_new_order(order, order.id != id);
     if (add_status != AddStatus::Accepted)
         return ReplaceResult{.new_quantity = Quantity{0},
                              .add_status = add_status,
@@ -118,10 +123,108 @@ ReplaceResult DenseLadderOrderBook<BandWidth, Hash>::replace_order(OrderId id,
                          .outcome = result.outcome};
 }
 
+// L1 view API
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+bool DenseLadderOrderBook<BandWidth, Hash>::best_bid(PriceQuantity &pq) const noexcept {
+    return best_level<Side::Buy>(pq);
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+bool DenseLadderOrderBook<BandWidth, Hash>::best_ask(PriceQuantity &pq) const noexcept {
+    return best_level<Side::Sell>(pq);
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+bool DenseLadderOrderBook<BandWidth, Hash>::best_price_quantity(Side side,
+                                                                PriceQuantity &pq) const noexcept {
+    return side == Side::Buy ? best_bid(pq) : best_ask(pq);
+}
+
+// L2 view API
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+CopyResult
+DenseLadderOrderBook<BandWidth, Hash>::copy_bid_depth(std::span<PriceLevel> out) const noexcept {
+    return copy_levels<Side::Buy>(out);
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+CopyResult
+DenseLadderOrderBook<BandWidth, Hash>::copy_ask_depth(std::span<PriceLevel> out) const noexcept {
+    return copy_levels<Side::Sell>(out);
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+CopyResult
+DenseLadderOrderBook<BandWidth, Hash>::copy_depth(Side side,
+                                                  std::span<PriceLevel> out) const noexcept {
+    return side == Side::Buy ? copy_bid_depth(out) : copy_ask_depth(out);
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side S>
+CopyResult
+DenseLadderOrderBook<BandWidth, Hash>::copy_levels(std::span<PriceLevel> out) const noexcept {
+
+    constexpr Price limit = S == Side::Buy ? min_price : max_price;
+    std::uint32_t written = 0;
+
+    if (!out.empty()) {
+        (void)walk_side<S>(limit, [&](const Level &level, Price price) {
+            out[written++] =
+                PriceLevel{.price = price, .total_quantity = level.total_quantity, .side = S};
+            return written == out.size() ? MatchOutcome::Filled : MatchOutcome::Exhausted;
+        });
+    }
+
+    return CopyResult{.written = written, .available = level_count<S>()};
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side S>
+std::uint32_t DenseLadderOrderBook<BandWidth, Hash>::level_count() const noexcept {
+    return with_side<S>([](const auto &better, const auto &, const auto &occupied,
+                           const auto &worse, const auto &) {
+        std::uint32_t n = static_cast<std::uint32_t>(better.size() + worse.size());
+        for (std::uint64_t word : occupied) {
+            n += static_cast<std::uint32_t>(std::popcount(word));
+        }
+        return n;
+    });
+}
+
 // private functions
+
+template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <Side S>
+bool DenseLadderOrderBook<BandWidth, Hash>::best_level(PriceQuantity &pq) const noexcept {
+
+    return with_side<S>([&](auto &better, auto &dense, auto & /*occupied*/, auto &worse,
+                            auto &best_slot) -> bool {
+        if (!better.empty()) {
+            pq = PriceQuantity{.price = better.front().first,
+                               .quantity = better.front().second.total_quantity};
+            return true;
+        }
+        if (best_slot != invalid_index) {
+            pq = PriceQuantity{.price = base_price_ + Price{static_cast<std::int64_t>(best_slot)},
+                               .quantity = dense[best_slot].total_quantity};
+            return true;
+        }
+        if (!worse.empty()) {
+            pq = PriceQuantity{.price = worse.front().first,
+                               .quantity = worse.front().second.total_quantity};
+            return true;
+        }
+
+        pq = PriceQuantity{.price = Price{0}, .quantity = Quantity{0}};
+        return false;
+    });
+}
+
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 void DenseLadderOrderBook<BandWidth, Hash>::reserve(const Config &config) {
-
     base_price_ = config.base;
     upper_price_ = config.base + Price{BandWidth - 1};
 
@@ -184,7 +287,6 @@ void DenseLadderOrderBook<BandWidth, Hash>::cancel_order_at_slot(std::size_t slo
 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 bool DenseLadderOrderBook<BandWidth, Hash>::remove_from_order_index(OrderId id) noexcept {
-
     const std::size_t slot = find_id_entry(id);
     if (slot == invalid_index)
         return false;
@@ -197,7 +299,6 @@ bool DenseLadderOrderBook<BandWidth, Hash>::remove_from_order_index(OrderId id) 
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side RestingSide>
 auto DenseLadderOrderBook<BandWidth, Hash>::get_level(Price price) noexcept -> Level & {
-
     return with_side<RestingSide>([&](auto &above, auto &dense, [[maybe_unused]] auto &occupied,
                                       auto &below, auto & /*best_slot*/) -> Level & {
         if (price > upper_price_) {
@@ -220,7 +321,6 @@ template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side RestingSide>
 void DenseLadderOrderBook<BandWidth, Hash>::remove_resting_at(
     Price price, std::uint32_t resting_index) noexcept {
-
     RestingOrderNode &node = resting_order_pool_[resting_index];
 
     auto from_overflow = [&](OverflowLevels &levels) {
@@ -257,7 +357,6 @@ void DenseLadderOrderBook<BandWidth, Hash>::remove_resting_at(
 template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 void DenseLadderOrderBook<BandWidth, Hash>::remove_resting_order(
     Level &level, RestingOrderNode &node, std::uint32_t node_index) noexcept {
-
     level.total_quantity -= node.quantity;
     if (node.prev == invalid_index) {
         level.head = node.next;
@@ -334,7 +433,6 @@ template <Side AggressiveSide, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &remaining,
                                                         Price level_price, const NewOrder &order,
                                                         TradeWriter &trade_writer) -> MatchOutcome {
-
     bool emit_trade;
     if (level.head == invalid_index)
         return MatchOutcome::Exhausted;
@@ -373,8 +471,8 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
             remaining -= node.quantity;
             remove_from_order_index(node.id);
             remove_resting_order(level, node,
-                                 node_index_copy); // includes removing the quantity from the
-                                                   // level.total_quantity
+                                 node_index_copy); // includes removing the quantity from
+                                                   // the level.total_quantity
             if (emit_trade) {
                 const Trade trade{.aggressive_order_id = order.id,
                                   .resting_order_id = node.id,
@@ -508,7 +606,6 @@ template <Side AggressiveSide, bool StpActive>
 MatchOutcome DenseLadderOrderBook<BandWidth, Hash>::match_order(Quantity &remaining,
                                                                 const NewOrder &order,
                                                                 TradeWriter &trade_writer) {
-
     Price limit = effective_limit(order);
 
     constexpr Side RestingSide = AggressiveSide == Side::Buy ? Side::Sell : Side::Buy;
@@ -559,7 +656,6 @@ void DenseLadderOrderBook<BandWidth, Hash>::rest_dense(Levels &levels, Occupancy
                                                        std::size_t &best_slot, Price price,
                                                        std::uint32_t node_index,
                                                        Quantity quantity) noexcept {
-
     assert(price >= base_price_ && price <= upper_price_ && "price must be inside the band");
     const std::size_t slot = price_diff_to_size_t(price, base_price_);
 
@@ -575,7 +671,6 @@ template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
 template <Side RestingSide>
 AddResult DenseLadderOrderBook<BandWidth, Hash>::rest_order(Quantity remaining,
                                                             const NewOrder &order) {
-
     assert(order.order_type == OrderType::Limit && "only limit orders rest");
 
     if (resting_order_pool_head_ == invalid_index) {
