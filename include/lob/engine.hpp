@@ -1,11 +1,11 @@
 #pragma once
 
-#include <lob/books/order_book_concept.hpp>
+#include <lob/books/ob_concepts.hpp>
 #include <lob/command.hpp>
+#include <lob/event_writer.hpp>
 #include <lob/instrument.hpp>
 #include <lob/rings_config.hpp>
 #include <lob/spsc_ring.hpp>
-#include <lob/trade_writer.hpp>
 
 #include <atomic>
 #include <concepts>
@@ -17,7 +17,7 @@ namespace lob {
 
 using CommandRing = SpscRing<Command, command_ring_capacity>;
 
-template <books::OrderBookCore Book> class Engine final {
+template <books::OrderBookCommands Book> class Engine final {
   public:
     template <typename... Args>
         requires std::constructible_from<Book, Args...>
@@ -28,7 +28,6 @@ template <books::OrderBookCore Book> class Engine final {
 
     Engine(const Engine &) = delete;
     Engine &operator=(const Engine &) = delete;
-
     Engine(Engine &&) = delete;
     Engine &operator=(Engine &&) = delete;
 
@@ -51,7 +50,7 @@ template <books::OrderBookCore Book> class Engine final {
     std::unique_ptr<CommandRing> command_ring_;
     std::unique_ptr<TradeRing> trade_ring_;
 
-    TradeWriter trade_writer_;
+    EventWriter trade_writer_;
     Book order_book_;
 
     std::atomic<bool> stop_engine_requested_{false};

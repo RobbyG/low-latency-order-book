@@ -17,11 +17,11 @@
 
 namespace lob {
 
-class TradeWriter;
+class EventWriter;
 
 namespace books {
 
-template <std::size_t BandWidth, lob::hashing::OrderIdSlotHashPolicy Hash>
+template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
 class DenseLadderOrderBook final {
 
   public:
@@ -37,11 +37,11 @@ class DenseLadderOrderBook final {
     DenseLadderOrderBook(DenseLadderOrderBook &&) = delete;
     DenseLadderOrderBook &operator=(DenseLadderOrderBook &&) = delete;
 
-    [[nodiscard]] AddResult add_order(const NewOrder &order, TradeWriter &trade_writer);
+    [[nodiscard]] AddResult add_order(const NewOrder &order, EventWriter &trade_writer);
     [[nodiscard]] CancelResult cancel_order(OrderId id) noexcept;
     [[nodiscard]] ReduceResult reduce_order_by(OrderId id, Quantity quantity) noexcept;
     [[nodiscard]] ReplaceResult replace_order(OrderId id, const NewOrder &order,
-                                              TradeWriter &trade_writer);
+                                              EventWriter &trade_writer);
 
     [[nodiscard]] bool best_bid(PriceQuantity &pq) const noexcept;
     [[nodiscard]] bool best_ask(PriceQuantity &pq) const noexcept;
@@ -60,15 +60,16 @@ class DenseLadderOrderBook final {
     void reset() noexcept;
 
   private:
-    static constexpr std::uint32_t invalid_index = std::numeric_limits<std::uint32_t>::max();
+    static constexpr std::uint32_t invalid_resting_index =
+        std::numeric_limits<std::uint32_t>::max();
 
-    static_assert(BandWidth > 0 && BandWidth <= invalid_index,
+    static_assert(BandWidth > 0 && BandWidth <= invalid_resting_index,
                   "BandWidth must be positive and within limits");
 
     struct Level {
         Quantity total_quantity{};
-        std::uint32_t head{invalid_index};
-        std::uint32_t tail{invalid_index};
+        std::uint32_t head{invalid_resting_index};
+        std::uint32_t tail{invalid_resting_index};
     };
     static_assert(sizeof(Level) == 16, "Level must be 16 bytes in size");
 
@@ -78,42 +79,42 @@ class DenseLadderOrderBook final {
         StpId stp_id;
         TimeInForce time_in_force;
 
-        std::uint32_t prev{invalid_index};
-        std::uint32_t next{invalid_index};
+        std::uint32_t prev{invalid_resting_index};
+        std::uint32_t next{invalid_resting_index};
     };
     static_assert(sizeof(RestingOrderNode) == 32, "RestingOrderNode must be 32 bytes in size");
 
-    struct IdEntry {
+    struct OrderLocation {
         OrderId id{};
         Price price{};
-        std::uint32_t node_index{invalid_index};
+        std::uint32_t resting_index{invalid_resting_index};
         Side side;
     };
-    static_assert(sizeof(IdEntry) == 24, "IdEntry must be 24 bytes in size");
+    static_assert(sizeof(OrderLocation) == 24, "OrderLocation must be 24 bytes in size");
 
-    using Levels = std::array<Level, BandWidth>;
-    using Occupancy = std::array<std::uint64_t, (BandWidth + 63) / 64>;
+    using Ladder = std::array<Level, BandWidth>;
+    using LadderOccupancy = std::array<std::uint64_t, (BandWidth + 63) / 64>;
     using OverflowLevels = std::vector<std::pair<Price, Level>>;
 
     Config config_;
 
-    Price base_price_;
-    Price upper_price_;
+    Price ladder_low_;
+    Price ladder_high_;
 
-    Levels bids_{};
-    Levels asks_{};
+    Ladder bids_{};
+    Ladder asks_{};
 
     // these are manually calculated bitmaps basically
     // each bit represents whether a level is occupied or not
     // the way it works, is that we increase from left to right, smallest to biggest in the array,
     // so over std::uint64_t s but within each std::uint64_t we increase from right to left, so the
     // least significant bit is the smallest level in that word
-    Occupancy bids_occupied_{};
-    Occupancy asks_occupied_{};
+    LadderOccupancy bids_occupied_{};
+    LadderOccupancy asks_occupied_{};
 
     // prices are normalized to slots
-    std::size_t best_bid_slot_{invalid_index};
-    std::size_t best_ask_slot_{invalid_index};
+    std::size_t bids_best_slot_{invalid_resting_index};
+    std::size_t asks_best_slot_{invalid_resting_index};
 
     OverflowLevels bids_better_overflow_, bids_worse_overflow_;
     OverflowLevels asks_better_overflow_, asks_worse_overflow_;
@@ -121,16 +122,22 @@ class DenseLadderOrderBook final {
     std::vector<RestingOrderNode> resting_order_pool_;
     std::uint32_t resting_order_pool_head_{};
 
-    std::vector<IdEntry> order_index_;
-    std::size_t order_index_mask_{};
-    unsigned order_index_shift_{};
+    std::vector<OrderLocation> order_location_table_;
+    std::size_t hash_mask_{};
+    unsigned hash_shift_{};
 
     template <Side S> [[nodiscard]] bool best_level(PriceQuantity &pq) const noexcept;
+
+    template <Side S> [[nodiscard]] const Level *best_price_level(Price &price) const noexcept;
 
     template <Side S>
     [[nodiscard]] CopyResult copy_levels(std::span<PriceLevel> out) const noexcept;
 
-    template <Side S> [[nodiscard]] std::uint64_t level_count() const noexcept;
+    template <Side S>
+    [[nodiscard]] CopyResult copy_level(const Level &level, Price price,
+                                        std::span<OrderView> out) const noexcept;
+
+    template <Side S> [[nodiscard]] std::uint32_t level_count() const noexcept;
 
     void reserve(const Config &config);
 
@@ -144,34 +151,33 @@ class DenseLadderOrderBook final {
     [[nodiscard]] static auto overflow_find_level(Overflow &levels, Price price) noexcept {
         return std::lower_bound(
             levels.begin(), levels.end(), price,
-            [](const auto &entry, Price value) { return worse<RestingSide>(value, entry.first); });
+            [](const auto &entry, Price value) { return worse<S>(value, entry.first); });
     }
 
     template <Side RestingSide> [[nodiscard]] Level &get_level(Price price) noexcept;
 
-    template <Side RestingSide> decltype(auto) with_side(this auto &self, auto &&f) {
-        if constexpr (RestingSide == Side::Buy)
+    template <Side S> decltype(auto) with_side(this auto &self, auto &&f) {
+        if constexpr (S == Side::Buy)
             return f(self.bids_better_overflow_, self.bids_, self.bids_occupied_,
                      self.bids_worse_overflow_, bself.est_bid_slot_);
         else
             return f(self.asks_better_overflow_, self.asks_, self.asks_occupied_,
-                     self.asks_worse_overflow_, self.best_ask_slot_);
+                     self.asks_worse_overflow_, self.asks_best_slot_);
     }
 
-    template <Side RestingSide>
-    void remove_resting_at(Price price, std::uint32_t resting_index) noexcept;
+    template <Side S> void remove_resting_at(Price price, std::uint32_t resting_index) noexcept;
 
     void remove_resting_order(Level &level, RestingOrderNode &node,
-                              std::uint32_t node_index) noexcept;
+                              std::uint32_t resting_index) noexcept;
 
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order,
                                                bool check_duplicate) const noexcept;
 
-    [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
+    [[nodiscard]] AddResult add_validated_order(const NewOrder &order, EventWriter &trade_writer);
 
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_level(Level &level, Quantity &remaining, Price level_price,
-                                           const NewOrder &order, TradeWriter &trade_writer);
+                                           const NewOrder &order, EventWriter &trade_writer);
 
     template <Side RestingSide, typename LevelsType>
     [[nodiscard]] static MatchOutcome walk_overflow(LevelsType &levels, Price limit, auto &&visit);
@@ -181,21 +187,21 @@ class DenseLadderOrderBook final {
                                                  auto &best_slot, Price base, Price limit,
                                                  auto &&visit);
 
-    template <Side RestingSide> MatchOutcome walk_side(this auto &self, Price limit, auto &&visit);
+    template <Side S> MatchOutcome walk_side(this auto &self, Price limit, auto &&visit);
 
     template <Side AggressiveSide, bool StpActive>
     [[nodiscard]] MatchOutcome match_order(Quantity &remaining, const NewOrder &order,
-                                           TradeWriter &trade_writer);
+                                           EventWriter &trade_writer);
 
-    void append_to_level(Level &level, std::uint32_t node_index, Quantity quantity) noexcept;
+    void append_to_level(Level &level, std::uint32_t resting_index, Quantity quantity) noexcept;
 
-    template <Side RestingSide>
-    void rest_overflow(OverflowLevels &levels, Price price, std::uint32_t node_index,
+    template <Side S>
+    void rest_overflow(OverflowLevels &levels, Price price, std::uint32_t resting_index,
                        Quantity quantity);
 
-    template <Side RestingSide>
-    void rest_dense(Levels &levels, Occupancy &occupied, std::size_t &best_slot, Price price,
-                    std::uint32_t node_index, Quantity quantity) noexcept;
+    template <Side S>
+    void rest_dense(Ladder &levels, LadderOccupancy &occupied, std::size_t &best_slot, Price price,
+                    std::uint32_t resting_index, Quantity quantity) noexcept;
 
     template <Side RestingSide>
     [[nodiscard]] AddResult rest_order(Quantity remaining, const NewOrder &order);
@@ -206,14 +212,14 @@ class DenseLadderOrderBook final {
         return static_cast<std::size_t>((price - base).get_value());
     }
 
-    static bool is_occupied(Occupancy &occupied, std::size_t slot) noexcept {
+    static bool is_occupied(LadderOccupancy &occupied, std::size_t slot) noexcept {
         return (occupied[slot >> 6] & std::uint64_t{1} << (slot & 63)) != 0;
     }
 
-    static void set_occupied(Occupancy &occupied, std::size_t slot) noexcept {
+    static void set_occupied(LadderOccupancy &occupied, std::size_t slot) noexcept {
         occupied[slot >> 6] |= std::uint64_t{1} << (slot & 63);
     }
-    static void clear_occupied(Occupancy &occupied, std::size_t slot) noexcept {
+    static void clear_occupied(LadderOccupancy &occupied, std::size_t slot) noexcept {
         occupied[slot >> 6] &= ~(std::uint64_t{1} << (slot & 63));
     }
 
@@ -221,15 +227,15 @@ class DenseLadderOrderBook final {
 
     [[nodiscard]] std::size_t find_id_entry(OrderId id) const noexcept;
 
-    [[nodiscard]] static std::size_t lower_occupied_slot(const Occupancy &occupied,
+    [[nodiscard]] static std::size_t lower_occupied_slot(const LadderOccupancy &occupied,
                                                          std::size_t slot) noexcept;
-    [[nodiscard]] static std::size_t higher_occupied_slot(const Occupancy &occupied,
+    [[nodiscard]] static std::size_t higher_occupied_slot(const LadderOccupancy &occupied,
                                                           std::size_t slot) noexcept;
 
     template <Side RestingSide> [[nodiscard]] std::size_t best_slot() const noexcept;
 
     template <Side RestingSide>
-    [[nodiscard]] static std::size_t next_worse_dense_slot(const Occupancy &occupied,
+    [[nodiscard]] static std::size_t next_worse_dense_slot(const LadderOccupancy &occupied,
                                                            std::size_t slot) noexcept;
 
     template <bool StpActive>
@@ -237,7 +243,7 @@ class DenseLadderOrderBook final {
                                           const NewOrder &order,
                                           Quantity &remaining) const noexcept;
 
-    template <Side RestingSide, bool StpActive>
+    template <Side S, bool StpActive>
     [[nodiscard]] bool can_fill_levels(const NewOrder &order) const noexcept;
 
     [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
@@ -246,4 +252,4 @@ class DenseLadderOrderBook final {
 } // namespace books
 } // namespace lob
 
-#include <lob/books/detail/dense_ladder_order_book_impl.hpp>
+#include <lob/books/detail/dense_ladder_ob_impl.hpp>

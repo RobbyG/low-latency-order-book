@@ -8,6 +8,10 @@
 namespace lob {
 
 namespace tag {
+
+struct Timestamp {};
+struct SequenceNumber {};
+
 struct OrderId {};
 struct StpId {};
 
@@ -15,6 +19,9 @@ struct Price {};
 struct Quantity {};
 struct Notional {};
 } // namespace tag
+
+using Timestamp = Scalar<std::uint64_t, tag::Timestamp>;
+using SequenceNumber = Scalar<std::uint64_t, tag::SequenceNumber>;
 
 using OrderId = IdType<std::uint64_t, tag::OrderId>;
 using StpId = IdType<std::uint32_t, tag::StpId>;

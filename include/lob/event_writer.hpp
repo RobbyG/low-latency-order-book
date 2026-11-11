@@ -1,5 +1,6 @@
 #pragma once
 
+#include <lob/market_event.hpp>
 #include <lob/rings_config.hpp>
 #include <lob/spsc_ring.hpp>
 #include <lob/thread_util.hpp>
@@ -7,14 +8,14 @@
 
 namespace lob {
 
-using TradeRing = SpscRing<Trade, trade_ring_capacity>;
+using EventRing = SpscRing<Trade, trade_ring_capacity>;
 
-// matcher stalls if trade ring is full, ring size should be large enough to avoid this, but if it
+// matcher stalls if event ring is full, ring size should be large enough to avoid this, but if it
 // happens, we pause the CPU to avoid busy waiting
 
-class TradeWriter final {
+class EventWriter final {
   public:
-    explicit TradeWriter(TradeRing &trade_ring) noexcept : trade_ring_(trade_ring) {}
+    explicit EventWriter(EventRing &trade_ring) noexcept : trade_ring_(trade_ring) {}
 
     void on_trade(const Trade &trade) noexcept {
         while (!trade_ring_.push(trade)) {
@@ -23,6 +24,6 @@ class TradeWriter final {
     }
 
   private:
-    TradeRing &trade_ring_;
+    EventRing &trade_ring_;
 };
 } // namespace lob

@@ -14,7 +14,7 @@
 
 namespace lob {
 
-class TradeWriter;
+class EventWriter;
 
 namespace books {
 
@@ -31,11 +31,11 @@ class MapListOrderBook final {
     MapListOrderBook(MapListOrderBook &&) = delete;
     MapListOrderBook &operator=(MapListOrderBook &&) = delete;
 
-    [[nodiscard]] AddResult add_order(const NewOrder &order, TradeWriter &trade_writer);
+    [[nodiscard]] AddResult add_order(const NewOrder &order, EventWriter &trade_writer);
     [[nodiscard]] CancelResult cancel_order(OrderId id) noexcept;
     [[nodiscard]] ReduceResult reduce_order_by(OrderId id, Quantity quantity) noexcept;
     [[nodiscard]] ReplaceResult replace_order(OrderId id, const NewOrder &order,
-                                              TradeWriter &trade_writer);
+                                              EventWriter &trade_writer);
 
     [[nodiscard]] bool best_bid(PriceQuantity &pq) const noexcept;
     [[nodiscard]] bool best_ask(PriceQuantity &pq) const noexcept;
@@ -99,12 +99,12 @@ class MapListOrderBook final {
     [[nodiscard]] AddStatus validate_new_replace_order(const NewOrder &order,
                                                        OrderId id) const noexcept;
 
-    [[nodiscard]] AddResult add_validated_order(const NewOrder &order, TradeWriter &trade_writer);
+    [[nodiscard]] AddResult add_validated_order(const NewOrder &order, EventWriter &trade_writer);
 
     template <typename OppositeLevels, typename SameSideLevels>
     [[nodiscard]] AddResult match_and_add(OppositeLevels &opposite_levels,
                                           SameSideLevels &same_side_levels, const NewOrder &order,
-                                          TradeWriter &trade_writer);
+                                          EventWriter &trade_writer);
 
     [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
 
@@ -112,8 +112,8 @@ class MapListOrderBook final {
 
     void erase_resting(OrderIndex::iterator index_it) noexcept;
 
-    template <typename Levels>
-    void erase_from_level(Levels &levels, const OrderLocation &location) noexcept;
+    template <typename Ladder>
+    void erase_from_level(Ladder &levels, const OrderLocation &location) noexcept;
 };
 
 } // namespace books

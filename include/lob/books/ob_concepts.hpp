@@ -1,9 +1,9 @@
 #pragma once
 
 #include <lob/domain_types.hpp>
+#include <lob/event_writer.hpp>
 #include <lob/order.hpp>
 #include <lob/order_book_results.hpp>
-#include <lob/trade_writer.hpp>
 
 #include <concepts>
 #include <cstdint>
@@ -16,12 +16,12 @@ concept OrderBookConstructible =
     requires { typename Book::Config; } && std::constructible_from<Book, typename Book::Config>;
 
 template <typename Book>
-concept OrderBookCore = requires(Book &book, const NewOrder &order, OrderId id, Quantity quantity,
-                                 TradeWriter &trade_writer) {
-    { book.add_order(order, trade_writer) } noexcept -> std::same_as<AddResult>;
-    { book.cancel_order(id) } noexcept -> std::same_as<CancelResult>;
-    { book.reduce_order_by(id, quantity) } noexcept -> std::same_as<ReduceResult>;
-    { book.replace_order(id, order, trade_writer) } noexcept -> std::same_as<ReplaceResult>;
+concept OrderBookCommands = requires(Book &book, const NewOrder &order, OrderId id,
+                                     Quantity quantity, EventWriter &event_writer) {
+    { book.add_order(order, event_writer) } noexcept -> std::same_as<AddResult>;
+    { book.cancel_order(id, event_writer) } noexcept -> std::same_as<CancelResult>;
+    { book.reduce_order_by(id, quantity, event_writer) } noexcept -> std::same_as<ReduceResult>;
+    { book.replace_order(id, order, event_writer) } noexcept -> std::same_as<ReplaceResult>;
 
     { book.reset() } noexcept -> std::same_as<void>;
 };
@@ -58,6 +58,6 @@ concept OrderBookStats = true; // placeholder
 
 template <typename Book>
 concept OrderBookImpl =
-    OrderBookConstructible<Book> && OrderBookCore<Book> && OrderBookL1View<Book> &&
+    OrderBookConstructible<Book> && OrderBookCommands<Book> && OrderBookL1View<Book> &&
     OrderBookL2View<Book> && OrderBookL3View<Book> && OrderBookStats<Book>;
 } // namespace lob::books

@@ -11,7 +11,7 @@
 namespace lob::hashing {
 
 template <class H>
-concept OrderIdSlotHashPolicy =
+concept OrderIdHashPolicy =
     std::is_empty_v<H> && requires(OrderId id, std::size_t mask, unsigned shift) {
         { H::operator()(id) } noexcept -> std::same_as<std::uint64_t>;
         { H::hash_into_slot(id, mask, shift) } noexcept -> std::same_as<std::size_t>;

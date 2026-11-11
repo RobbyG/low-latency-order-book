@@ -8,6 +8,14 @@
 
 namespace lob {
 
+enum class RejectReason : std::uint8_t {
+    InvalidQuantity,
+    InvalidPrice,
+    DuplicateOrderId,
+    UnknownOrderId,
+    FokNotFillable, // etc... maybe others later
+};
+
 enum class MatchOutcome : std::uint8_t {
     None,
     Aborted,

@@ -27,7 +27,7 @@ target_include_directories(lob_headers
 
 add_library(lob_core STATIC
     src/engine.cpp
-    src/books/map_list_order_book.cpp
+    src/books/map_list_ob.cpp
 )
 
 target_link_libraries(lob_core

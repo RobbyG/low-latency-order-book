@@ -1,4 +1,4 @@
-#include <lob/books/map_list_order_book.hpp>
+#include <lob/books/map_list_ob.hpp>
 
 #include <algorithm>
 #include <cassert>
@@ -215,7 +215,7 @@ MapListOrderBook::MapListOrderBook(Config config) : config_(config) {
 
 // core mutation api
 
-AddResult MapListOrderBook::add_order(const NewOrder &order, TradeWriter &trade_writer) {
+AddResult MapListOrderBook::add_order(const NewOrder &order, EventWriter &trade_writer) {
     assert(order.quantity != Quantity{0} && "Order cannot have a quantity of 0");
 
     const AddStatus status = validate_new_order(order);
@@ -276,7 +276,7 @@ ReduceResult MapListOrderBook::reduce_order_by(OrderId id, Quantity quantity) no
 }
 
 ReplaceResult MapListOrderBook::replace_order(OrderId id, const NewOrder &order,
-                                              TradeWriter &trade_writer) {
+                                              EventWriter &trade_writer) {
     auto index_it = order_index_.find(id);
 
     if (index_it == order_index_.end()) {
@@ -425,7 +425,7 @@ AddStatus MapListOrderBook::validate_new_replace_order(const NewOrder &order,
     return AddStatus::Accepted;
 }
 
-AddResult MapListOrderBook::add_validated_order(const NewOrder &order, TradeWriter &trade_writer) {
+AddResult MapListOrderBook::add_validated_order(const NewOrder &order, EventWriter &trade_writer) {
     if (order.side == Side::Buy) {
         return match_and_add(asks_, bids_, order, trade_writer);
     } else {
@@ -436,7 +436,7 @@ AddResult MapListOrderBook::add_validated_order(const NewOrder &order, TradeWrit
 template <typename OppositeLevels, typename SameSideLevels>
 AddResult MapListOrderBook::match_and_add(OppositeLevels &opposite_levels,
                                           SameSideLevels &same_side_levels, const NewOrder &order,
-                                          TradeWriter &trade_writer) {
+                                          EventWriter &trade_writer) {
 
     const auto comparator = opposite_levels.key_comp();
     auto level_it = opposite_levels.begin();
