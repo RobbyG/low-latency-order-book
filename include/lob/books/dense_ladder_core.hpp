@@ -11,16 +11,12 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <limits>
-#include <map>
 #include <span>
 #include <utility>
 #include <vector>
 
 namespace lob {
-
-class EventWriter;
 
 namespace books {
 
@@ -96,7 +92,7 @@ template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash> class Den
         std::uint32_t resting_index{invalid_resting_index};
         Side side;
     };
-    static_assert(sizeof(OrderLocation) == 24, "IdEntry must be 24 bytes in size");
+    static_assert(sizeof(OrderLocation) == 24, "OrderLocation must be 24 bytes in size");
 
     enum class WalkControl : std::uint8_t { Continue, Stop };
 
@@ -106,6 +102,21 @@ template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash> class Den
 
   protected: // derived class API
     template <Side S> void walk_side(this auto &self, Price limit, auto &&visit);
+
+    template <Side S> [[nodiscard]] AddResult rest_order(Quantity remaining, const NewOrder &order);
+
+    CancelResult remove_order(OrderId id) noexcept;
+
+    void remove_order_from_location(std::size_t slot) noexcept;
+
+    void remove_resting_from_level(Level &level, RestingOrderNode &node,
+                                   std::uint32_t resting_index) noexcept;
+
+    bool remove_slot_from_order_locations(OrderId id) noexcept;
+
+    ReduceResult reduce_order(OrderId id, Quantity quantity) noexcept;
+
+    [[nodiscard]] std::size_t find_order_location(OrderId id) const noexcept;
 
   private: // internal helpers
     // construction
@@ -120,13 +131,21 @@ template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash> class Den
     template <Side S> [[nodiscard]] std::uint32_t level_count() const noexcept;
 
     // L3 view
+    template <Side S>
+    [[nodiscard]] CopyResult copy_orders_at_price(Price price,
+                                                  std::span<OrderView> out) const noexcept;
+
     template <Side S> [[nodiscard]] const Level *best_price_level(Price &price) const noexcept;
 
     template <Side S>
     [[nodiscard]] CopyResult copy_level(const Level &level, Price price,
                                         std::span<OrderView> out) const noexcept;
 
-    template <Side S> [[nodiscard]] const Level *get_level(Price price) const noexcept;
+    template <Side S> [[nodiscard]] const Level *find_level(Price price) const noexcept;
+
+    template <Side S> [[nodiscard]] Level *find_level(Price price) noexcept {
+        return const_cast<Level *>(std::as_const(*this).template find_level<S>(price));
+    }
 
     // walk
     template <Side S, typename LevelsType>
@@ -139,39 +158,22 @@ template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash> class Den
 
     // order management
     // cancel/remove
-    void cancel_order_at_location(std::size_t order_index_slot) noexcept;
 
-    template <Side S> void remove_resting_at(Price price, std::uint32_t resting_index) noexcept;
+    template <Side S>
+    void remove_resting_at_index(Price price, std::uint32_t resting_index) noexcept;
 
     void remove_slot_from_order_locations(std::size_t slot) noexcept;
 
-    bool remove_id_from_order_locations(OrderId id) noexcept;
-
-    void remove_resting_order(Level &level, RestingOrderNode &node,
-                              std::uint32_t resting_index) noexcept;
-
     // rest
-    ////////////////////////////////////////////
-    void append_to_level(Level &level, std::uint32_t resting_index, Quantity quantity) noexcept;
+    template <Side S>
+    void rest_ladder(Ladder &levels, LadderOccupancy &occupied, std::size_t &best_slot, Price price,
+                     std::uint32_t resting_index, Quantity quantity) noexcept;
 
     template <Side S>
     void rest_overflow(OverflowLevels &levels, Price price, std::uint32_t resting_index,
                        Quantity quantity);
 
-    template <Side S>
-    void rest_dense(Ladder &levels, LadderOccupancy &occupied, std::size_t &best_slot, Price price,
-                    std::uint32_t resting_index, Quantity quantity) noexcept;
-
-    template <Side RestingSide>
-    [[nodiscard]] AddResult rest_order(Quantity remaining, const NewOrder &order);
-
-    [[nodiscard]] std::size_t probe_slot(OrderId) const noexcept;
-
-    [[nodiscard]] std::size_t find_id_entry(OrderId id) const noexcept;
-
-    template <Side RestingSide> [[nodiscard]] std::size_t best_slot() const noexcept;
-
-    ////////////////////////////////////////////
+    void append_to_level(Level &level, std::uint32_t resting_index, Quantity quantity) noexcept;
 
   private: // building blocks
     template <Side S> decltype(auto) with_side(this auto &self, auto &&f) {
@@ -216,8 +218,10 @@ template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash> class Den
             [](const auto &entry, Price value) { return worse<S>(value, entry.first); });
     }
 
+    [[nodiscard]] std::size_t probe_slot(OrderId) const noexcept;
+
     // ladder occupancy
-    static bool is_occupied(LadderOccupancy &occupied, std::size_t slot) noexcept {
+    static decltype(auto) is_occupied(auto &occupied, std::size_t slot) noexcept {
         return (occupied[slot >> 6] & std::uint64_t{1} << (slot & 63)) != 0;
     }
 
@@ -247,13 +251,14 @@ template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash> class Den
     Ladder asks_{};
 
     // one bit per level; set means the level has resting orders
-    // slot s is bit (s % 64) of word (s / 64), so bit 0 of word 0 is the lowest price in the band
+    // slot s is bit (s % 64) of word (s / 64), so bit 0 of word 0 is the lowest price in the
+    // band
     LadderOccupancy bids_occupied_{};
     LadderOccupancy asks_occupied_{};
 
-    // price_slot = price - ladder_low_; invalid_resting_index when the level is empty
-    std::size_t bids_best_slot_{invalid_resting_index};
-    std::size_t asks_best_slot_{invalid_resting_index};
+    // price_slot = price - ladder_low_; invalid_price_slot when the level is empty
+    std::size_t bids_best_slot_{invalid_price_slot};
+    std::size_t asks_best_slot_{invalid_price_slot};
 
     OverflowLevels bids_better_overflow_, bids_worse_overflow_;
     OverflowLevels asks_better_overflow_, asks_worse_overflow_;
