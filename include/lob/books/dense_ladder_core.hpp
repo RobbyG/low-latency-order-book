@@ -39,7 +39,7 @@ template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash> class Den
     DenseLadderCore(DenseLadderCore &&) = delete;
     DenseLadderCore &operator=(DenseLadderCore &&) = delete;
 
-  public: // views
+  protected: // views
     // L1 view API
     [[nodiscard]] bool best_bid(PriceQuantity &pq) const noexcept;
     [[nodiscard]] bool best_ask(PriceQuantity &pq) const noexcept;

@@ -8,11 +8,14 @@
 
 namespace lob {
 
-struct OrderAdded {
+struct OrderRested {
     OrderId id;
     Price price;
     Quantity quantity;
     Side side;
+
+    StpId stp_id;
+    TimeInForce time_in_force;
 };
 
 struct OrderCancelled {
@@ -29,9 +32,9 @@ struct OrderRejected {
     RejectReason reason;
 };
 
-using EventType = std::variant<OrderAdded, OrderCancelled, OrderReduced, OrderRejected, Trade>;
+using EventType = std::variant<OrderRested, OrderCancelled, OrderReduced, OrderRejected, Trade>;
 
-struct MarketEvent {
+struct alignas(64) MarketEvent {
     SequenceNumber seq;
     Timestamp t;
     EventType type;
