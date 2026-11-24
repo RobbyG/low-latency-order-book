@@ -14,9 +14,14 @@ using EventRing = SpscRing<MarketEvent, event_ring_capacity>;
 
 class EventWriter final {
   public:
-    explicit EventWriter(EventRing &event_ring) noexcept : event_ring_(event_ring) {}
+    explicit EventWriter(EventRing &ring) noexcept : event_ring_(ring) {}
 
-    void on_event(const MarketEvent &event) noexcept {
+    void set_command_timestamp(Timestamp t) noexcept {
+        timestamp_ = t;
+    }
+
+    void write_event(const EventType &event_type) noexcept {
+        const MarketEvent event{.seq = seq_number_++, .t = timestamp_, .type = event_type};
         while (!event_ring_.push(event)) {
             pause_cpu();
         }
@@ -24,5 +29,7 @@ class EventWriter final {
 
   private:
     EventRing &event_ring_;
+    SequenceNumber seq_number_{};
+    Timestamp timestamp_{};
 };
 } // namespace lob

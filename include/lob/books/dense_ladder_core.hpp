@@ -221,8 +221,8 @@ template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash> class Den
     [[nodiscard]] std::size_t probe_slot(OrderId) const noexcept;
 
     // ladder occupancy
-    static decltype(auto) is_occupied(auto &occupied, std::size_t slot) noexcept {
-        return (occupied[slot >> 6] & std::uint64_t{1} << (slot & 63)) != 0;
+    static bool is_occupied(const LadderOccupancy &occupied, std::size_t slot) noexcept {
+        return (occupied[slot >> 6] & (std::uint64_t{1} << (slot & 63))) != 0;
     }
 
     static void set_occupied(LadderOccupancy &occupied, std::size_t slot) noexcept {

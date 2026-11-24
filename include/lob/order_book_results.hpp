@@ -13,7 +13,9 @@ enum class RejectReason : std::uint8_t {
     InvalidPrice,
     DuplicateOrderId,
     UnknownOrderId,
-    FokNotFillable, // etc... maybe others later
+    FokNotFillable,
+    ExceedsRestingQuantity,
+    SideChangeNotAllowed,
 };
 
 enum class MatchOutcome : std::uint8_t {

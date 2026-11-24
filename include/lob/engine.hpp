@@ -19,13 +19,6 @@ using CommandRing = SpscRing<Command, command_ring_capacity>;
 
 template <books::OrderBookCommands Book> class Engine final {
   public:
-    template <typename... Args>
-        requires std::constructible_from<Book, Args...>
-    explicit Engine(Args &&...args)
-        : command_ring_(std::make_unique<CommandRing>()),
-          trade_ring_(std::make_unique<TradeRing>()), trade_writer_(*trade_ring_),
-          order_book_(std::forward<Args>(args)...) {}
-
     Engine(const Engine &) = delete;
     Engine &operator=(const Engine &) = delete;
     Engine(Engine &&) = delete;

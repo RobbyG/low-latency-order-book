@@ -16,13 +16,6 @@
 
 namespace lob::books {
 
-// construction
-
-template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
-DenseLadderOrderBook<BandWidth, Hash>::DenseLadderOrderBook(Config config) : config_(config) {
-    reserve(config_);
-}
-
 // API
 
 template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
@@ -32,16 +25,9 @@ AddResult DenseLadderOrderBook<BandWidth, Hash>::add_order(const NewOrder &order
 
     AddStatus status = validate_new_order(order, true);
     if (status != AddStatus::Accepted) {
-        RejectReason reason;
-        switch (status) {
-        case AddStatus::DuplicateOrderId:
-            reason = RejectReason::DuplicateOrderId;
-            break;
-        case AddStatus::WouldNotFullyFill:
-            reason = RejectReason::FokNotFillable;
-            break;
-        }
-        event_writer.on_event(Merket) return AddResult{
+        event_writer.write_event(
+            OrderRejected{.id = order.id, .reason = validation_reject_reason(status)});
+        return AddResult{
             .remaining = order.quantity, .status = status, .outcome = MatchOutcome::None};
     }
 
@@ -52,16 +38,14 @@ template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
 CancelResult
 DenseLadderOrderBook<BandWidth, Hash>::cancel_order(OrderId id,
                                                     EventWriter &event_writer) noexcept {
-    const std::size_t slot = find_id_entry(id);
-    if (slot == invalid_resting_index)
-        return CancelResult{.quantity = Quantity{0}, .status = CancelStatus::NotFound};
+    CancelResult result = this->remove_order(id);
 
-    const Quantity cancelled_quantity =
-        resting_order_pool_[order_location_table_[slot].resting_index].quantity;
+    if (result.status == CancelStatus::Cancelled)
+        event_writer.write_event(OrderCancelled{.id = id});
+    else
+        event_writer.write_event(OrderRejected{.id = id, .reason = RejectReason::UnknownOrderId});
 
-    cancel_order_at_slot(slot);
-
-    return CancelResult{.quantity = cancelled_quantity, .status = CancelStatus::Cancelled};
+    return result;
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
@@ -69,40 +53,25 @@ ReduceResult
 DenseLadderOrderBook<BandWidth, Hash>::reduce_order_by(OrderId id, Quantity quantity,
                                                        EventWriter &event_writer) noexcept {
 
-    const Quantity local_quantity = quantity;
+    ReduceResult result = this->reduce_order(id, quantity);
 
-    assert(local_quantity > Quantity{0} && "the quantity to reduce by must be greater than 0");
-    const std::size_t slot = find_id_entry(id);
-    if (slot == invalid_resting_index)
-        return ReduceResult{.new_quantity = Quantity{0},
-                            .old_quantity = Quantity{0},
-                            .status = ReduceStatus::NotFound};
-
-    const OrderLocation entry = order_location_table_[slot];
-    auto &order = resting_order_pool_[entry.resting_index];
-    const Quantity old_quantity = order.quantity;
-
-    if (old_quantity < local_quantity)
-        return ReduceResult{.new_quantity = old_quantity,
-                            .old_quantity = old_quantity,
-                            .status = ReduceStatus::ExceedsRestingQuantity};
-
-    if (old_quantity == local_quantity) {
-        cancel_order_at_slot(slot);
-        return ReduceResult{.new_quantity = Quantity{0},
-                            .old_quantity = old_quantity,
-                            .status = ReduceStatus::Cancelled};
+    switch (result.status) {
+    case ReduceStatus::Reduced:
+        event_writer.write_event(OrderReduced{.id = id, .new_quantity = result.new_quantity});
+        break;
+    case ReduceStatus::Cancelled:
+        event_writer.write_event(OrderCancelled{.id = id});
+        break;
+    case ReduceStatus::NotFound:
+        event_writer.write_event(OrderRejected{.id = id, .reason = RejectReason::UnknownOrderId});
+        break;
+    case ReduceStatus::ExceedsRestingQuantity:
+        event_writer.write_event(
+            OrderRejected{.id = id, .reason = RejectReason::ExceedsRestingQuantity});
+        break;
     }
 
-    Level &level = entry.side == Side::Buy ? get_level<Side::Buy>(entry.price)
-                                           : get_level<Side::Sell>(entry.price);
-    level.total_quantity -= local_quantity;
-
-    const Quantity new_quantity = old_quantity - local_quantity;
-    order.quantity = new_quantity;
-    return ReduceResult{.new_quantity = new_quantity,
-                        .old_quantity = old_quantity,
-                        .status = ReduceStatus::Reduced};
+    return result;
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
@@ -111,23 +80,39 @@ DenseLadderOrderBook<BandWidth, Hash>::replace_order(OrderId id, const NewOrder 
                                                      EventWriter &event_writer) noexcept {
     assert(order.quantity != Quantity{0} && "a new order cannot have a quantity of 0");
 
-    const std::size_t slot = find_id_entry(id);
-    if (slot == invalid_resting_index)
+    const std::size_t slot = this->find_order_location(id);
+
+    if (slot == invalid_hash_slot) {
+        event_writer.write_event(OrderRejected{.id = id, .reason = RejectReason::UnknownOrderId});
         return ReplaceResult{.new_quantity = Quantity{0},
                              .add_status = AddStatus::NotAttempted,
                              .cancel_status = CancelStatus::NotFound,
                              .outcome = MatchOutcome::None};
+    }
+
+    if (order.side != order_location_table_[slot].side) {
+        event_writer.write_event(
+            OrderRejected{.id = id, .reason = RejectReason::SideChangeNotAllowed});
+        return ReplaceResult{.new_quantity = Quantity{0},
+                             .add_status = AddStatus::NotAttempted,
+                             .cancel_status = CancelStatus::NotAttempted,
+                             .outcome = MatchOutcome::None};
+    }
 
     // if we replace with same id, skip duplicate check in validation as it will always find a
     // duplicate and fail the validation (the old order will be removed anyway)
     AddStatus add_status = validate_new_order(order, order.id != id);
-    if (add_status != AddStatus::Accepted)
+    if (add_status != AddStatus::Accepted) {
+        event_writer.write_event(
+            OrderRejected{.id = id, .reason = validation_reject_reason(add_status)});
         return ReplaceResult{.new_quantity = Quantity{0},
                              .add_status = add_status,
                              .cancel_status = CancelStatus::NotAttempted,
                              .outcome = MatchOutcome::None};
+    }
 
-    cancel_order_at_slot(slot);
+    this->remove_order_from_location(slot);
+    event_writer.write_event(OrderCancelled{.id = id});
 
     AddResult result = add_validated_order(order, event_writer);
 
@@ -138,15 +123,131 @@ DenseLadderOrderBook<BandWidth, Hash>::replace_order(OrderId id, const NewOrder 
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
-void DenseLadderOrderBook<BandWidth, Hash>::end_session(EventWriter &event_writer) noexcept {}
+void DenseLadderOrderBook<BandWidth, Hash>::end_session(EventWriter &event_writer) noexcept {
+    eod_purge_ids_.clear();
+
+    for (std::size_t slot = 0; slot <= this->hash_mask_; ++slot) {
+        std::uint32_t resting_index = order_location_table_[slot].resting_index;
+        if (resting_index != invalid_resting_index &&
+            resting_order_pool_[resting_index].time_in_force == TimeInForce::Gfd)
+            eod_purge_ids_.push_back(resting_order_pool_[resting_index].id);
+    }
+
+    for (const OrderId id : eod_purge_ids_) {
+        (void)cancel_order(id, event_writer);
+    }
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
+template <Side S, bool StpActive>
+auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &remaining,
+                                                        Price level_price, const NewOrder &order,
+                                                        EventWriter &event_writer) noexcept
+    -> MatchOutcome {
+    bool emit_trade;
+    if (level.head == invalid_resting_index)
+        return MatchOutcome::Exhausted;
+
+    std::uint32_t resting_index = level.head;
+    while (resting_index != invalid_resting_index && remaining > Quantity{0}) {
+        emit_trade = true;
+        std::uint32_t node_index_copy = resting_index;
+        RestingOrderNode &node = resting_order_pool_[resting_index];
+        const OrderId resting_id = node.id;
+        const Quantity resting_quantity = node.quantity;
+
+        if constexpr (StpActive) {
+            if (order.stp_id == node.stp_id) {
+                switch (order.self_trade_resolve) {
+                case SelfTradeResolve::CancelBoth:
+                    this->remove_resting_from_level(level, node, node_index_copy);
+                    this->remove_slot_from_order_locations(resting_id);
+                    event_writer.write_event(OrderCancelled{.id = resting_id});
+                    return MatchOutcome::Aborted;
+                case SelfTradeResolve::CancelNew:
+                    return MatchOutcome::Aborted;
+                case SelfTradeResolve::CancelResting:
+                    resting_index = node.next;
+                    this->remove_resting_from_level(level, node, node_index_copy);
+                    this->remove_slot_from_order_locations(resting_id);
+                    event_writer.write_event(OrderCancelled{.id = resting_id});
+                    continue;
+                case SelfTradeResolve::DecrementAndCancel:
+                    emit_trade = false;
+                    break;
+                }
+            }
+        }
+
+        resting_index = node.next;
+
+        if (remaining >= resting_quantity) {
+            remaining -= resting_quantity;
+            this->remove_resting_from_level(level, node, node_index_copy);
+            this->remove_slot_from_order_locations(resting_id);
+            if (emit_trade) {
+                const Trade trade{.aggressive_order_id = order.id,
+                                  .resting_order_id = resting_id,
+                                  .price = level_price,
+                                  .quantity = resting_quantity,
+                                  .aggressive_side = S};
+
+                event_writer.write_event(trade);
+            } else {
+                event_writer.write_event(OrderCancelled{.id = resting_id});
+            }
+        } else {
+            level.total_quantity -= remaining;
+            node.quantity -= remaining;
+            if (emit_trade) {
+                const Trade trade{.aggressive_order_id = order.id,
+                                  .resting_order_id = node.id,
+                                  .price = level_price,
+                                  .quantity = remaining,
+                                  .aggressive_side = S};
+
+                event_writer.write_event(trade);
+            } else {
+                event_writer.write_event(
+                    OrderReduced{.id = node.id, .new_quantity = node.quantity});
+            }
+            remaining = Quantity{0};
+        }
+    }
+
+    if (remaining == Quantity{0})
+        return MatchOutcome::Filled;
+    else
+        return MatchOutcome::Exhausted;
+}
+
+template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
+template <Side S, bool StpActive>
+MatchOutcome
+DenseLadderOrderBook<BandWidth, Hash>::match_order(Quantity &remaining, const NewOrder &order,
+                                                   EventWriter &event_writer) noexcept {
+    Price limit = effective_limit(order);
+
+    constexpr Side RestingSide = S == Side::Buy ? Side::Sell : Side::Buy;
+
+    MatchOutcome outcome = MatchOutcome::Exhausted;
+    auto visit = [&](Level &level, Price price) {
+        outcome = match_level<S, StpActive>(level, remaining, price, order, event_writer);
+        return outcome == MatchOutcome::Exhausted ? WalkControl::Continue : WalkControl::Stop;
+    };
+
+    this->template walk_side<RestingSide>(limit, visit);
+
+    return outcome;
+}
 
 template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
 AddStatus
 DenseLadderOrderBook<BandWidth, Hash>::validate_new_order(const NewOrder &order,
                                                           bool check_duplicate) const noexcept {
     if (check_duplicate) {
-        std::size_t slot = find_order_location(order.id);
-        if (slot != invalid_resting_index) {
+        std::size_t slot = this->find_order_location(order.id);
+        if (slot != invalid_hash_slot) {
             return AddStatus::DuplicateOrderId;
         }
     }
@@ -180,9 +281,19 @@ DenseLadderOrderBook<BandWidth, Hash>::add_validated_order(const NewOrder &order
                          .outcome = MatchOutcome::Filled};
     case MatchOutcome::Exhausted:
         if (order.order_type == OrderType::Limit && order.time_in_force != TimeInForce::Fok &&
-            order.time_in_force != TimeInForce::Ioc)
-            return order.side == Side::Buy ? rest_order<Side::Buy>(remaining, order)
-                                           : rest_order<Side::Sell>(remaining, order);
+            order.time_in_force != TimeInForce::Ioc) {
+            const AddResult result = order.side == Side::Buy
+                                         ? this->template rest_order<Side::Buy>(remaining, order)
+                                         : this->template rest_order<Side::Sell>(remaining, order);
+            if (result.status == AddStatus::Rested)
+                event_writer.write_event(OrderRested{.id = order.id,
+                                                     .price = order.price,
+                                                     .quantity = remaining,
+                                                     .side = order.side,
+                                                     .stp_id = order.stp_id,
+                                                     .time_in_force = order.time_in_force});
+            return result;
+        }
         [[fallthrough]];
     case MatchOutcome::Aborted:
         return AddResult{.remaining = remaining,
@@ -191,103 +302,6 @@ DenseLadderOrderBook<BandWidth, Hash>::add_validated_order(const NewOrder &order
     }
 
     std::unreachable();
-}
-
-template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
-template <Side AggressiveSide, bool StpActive>
-auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &remaining,
-                                                        Price level_price, const NewOrder &order,
-                                                        EventWriter &event_writer) -> MatchOutcome {
-    bool emit_trade;
-    if (level.head == invalid_resting_index)
-        return MatchOutcome::Exhausted;
-
-    std::uint32_t resting_index = level.head;
-    while (resting_index != invalid_resting_index && remaining > Quantity{0}) {
-        emit_trade = true;
-        std::uint32_t node_index_copy = resting_index;
-        RestingOrderNode &node = resting_order_pool_[resting_index];
-
-        if constexpr (StpActive) {
-            if (order.stp_id == node.stp_id) {
-                switch (order.self_trade_resolve) {
-                case SelfTradeResolve::CancelBoth:
-                    remove_from_order_index(node.id);
-                    remove_resting_order(level, node, resting_index);
-
-                    return MatchOutcome::Aborted;
-                case SelfTradeResolve::CancelNew:
-                    return MatchOutcome::Aborted;
-                case SelfTradeResolve::CancelResting:
-                    resting_index = node.next;
-                    remove_from_order_index(node.id);
-                    remove_resting_order(level, node, node_index_copy);
-                    continue;
-                case SelfTradeResolve::DecrementAndCancel:
-                    emit_trade = false;
-                    break;
-                }
-            }
-        }
-
-        resting_index = node.next;
-
-        if (remaining >= node.quantity) {
-            remaining -= node.quantity;
-            remove_from_order_index(node.id);
-            remove_resting_order(level, node,
-                                 node_index_copy); // includes removing the quantity from
-                                                   // the level.total_quantity
-            if (emit_trade) {
-                const Trade trade{.aggressive_order_id = order.id,
-                                  .resting_order_id = node.id,
-                                  .price = level_price,
-                                  .quantity = node.quantity,
-                                  .aggressive_side = AggressiveSide};
-
-                event_writer.on_event(trade);
-            }
-        } else {
-            level.total_quantity -= remaining;
-            if (emit_trade) {
-                const Trade trade{.aggressive_order_id = order.id,
-                                  .resting_order_id = node.id,
-                                  .price = level_price,
-                                  .quantity = remaining,
-                                  .aggressive_side = AggressiveSide};
-
-                event_writer.on_event(trade);
-            }
-            node.quantity -= remaining;
-            remaining = Quantity{0};
-        }
-    }
-
-    if (remaining == Quantity{0})
-        return MatchOutcome::Filled;
-    else
-        return MatchOutcome::Exhausted;
-}
-
-template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
-template <Side AggressiveSide, bool StpActive>
-MatchOutcome DenseLadderOrderBook<BandWidth, Hash>::match_order(Quantity &remaining,
-                                                                const NewOrder &order,
-                                                                EventWriter &event_writer) {
-    Price limit = effective_limit(order);
-
-    constexpr Side RestingSide = AggressiveSide == Side::Buy ? Side::Sell : Side::Buy;
-
-    auto visit = [&](Level &level, Price price) {
-        MatchOutcome outcome =
-            match_level<AggressiveSide, StpActive>(level, remaining, price, order, event_writer);
-        if (outcome == MatchOutcome::Exhausted)
-            return WalkControl::Continue;
-        else
-            return WalkControl::Stop;
-    };
-
-    return walk_side<RestingSide>(limit, visit);
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
@@ -346,11 +360,15 @@ bool DenseLadderOrderBook<BandWidth, Hash>::can_fill_levels(const NewOrder &orde
     Quantity remaining = order.quantity;
     const Price limit = effective_limit(order);
 
+    MatchOutcome outcome = MatchOutcome::Exhausted;
     auto visit = [&](const Level &level, Price price) {
-        return scan_level<StpActive>(level, price, order, remaining);
+        outcome = scan_level<StpActive>(level, price, order, remaining);
+        return outcome == MatchOutcome::Exhausted ? WalkControl::Continue : WalkControl::Stop;
     };
 
-    return walk_side<S>(limit, visit) == MatchOutcome::Filled;
+    this->template walk_side<S>(limit, visit);
+
+    return outcome == MatchOutcome::Filled;
 }
 
 template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>

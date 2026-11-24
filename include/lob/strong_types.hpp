@@ -32,6 +32,12 @@ template <typename T, typename Tag> struct Scalar {
         return left;
     }
 
+    constexpr Scalar operator++(int) noexcept {
+        Scalar old = *this;
+        value_++;
+        return old;
+    }
+
     [[nodiscard]] constexpr T get_value() const noexcept {
         return value_;
     }

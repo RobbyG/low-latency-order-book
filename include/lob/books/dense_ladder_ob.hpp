@@ -14,6 +14,7 @@
 #include <limits>
 #include <map>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace lob {
@@ -28,7 +29,9 @@ class DenseLadderOrderBook final : public DenseLadderCore<BandWidth, Hash> {
 
   public: // construction
     using typename Core::Config;
-    explicit DenseLadderOrderBook(Config config) : Core(config) {}
+    explicit DenseLadderOrderBook(Config config) : Core(config) {
+        eod_purge_ids_.reserve(config.max_orders);
+    }
 
     // copy and move disabled
     DenseLadderOrderBook(const DenseLadderOrderBook &) = delete;
@@ -51,18 +54,21 @@ class DenseLadderOrderBook final : public DenseLadderCore<BandWidth, Hash> {
     using Core::invalid_hash_slot;
     using Core::invalid_price_slot;
     using Core::invalid_resting_index;
+    using Core::order_location_table_;
+    using Core::resting_order_pool_;
     using typename Core::Level;
     using typename Core::RestingOrderNode;
     using typename Core::WalkControl;
 
   private: // matching
-    template <Side AggressiveSide, bool StpActive>
+    template <Side S, bool StpActive>
     [[nodiscard]] MatchOutcome match_level(Level &level, Quantity &remaining, Price level_price,
-                                           const NewOrder &order, EventWriter &event_writer);
+                                           const NewOrder &order,
+                                           EventWriter &event_writer) noexcept;
 
-    template <Side AggressiveSide, bool StpActive>
+    template <Side S, bool StpActive>
     [[nodiscard]] MatchOutcome match_order(Quantity &remaining, const NewOrder &order,
-                                           EventWriter &event_writer);
+                                           EventWriter &event_writer) noexcept;
 
     // validate and add
     [[nodiscard]] AddStatus validate_new_order(const NewOrder &order,
@@ -81,6 +87,18 @@ class DenseLadderOrderBook final : public DenseLadderCore<BandWidth, Hash> {
     [[nodiscard]] bool can_fill_levels(const NewOrder &order) const noexcept;
 
     [[nodiscard]] bool can_fully_fill(const NewOrder &order) const noexcept;
+
+    // helpers
+    [[nodiscard]] constexpr RejectReason validation_reject_reason(AddStatus status) noexcept {
+        switch (status) {
+        case AddStatus::DuplicateOrderId:
+            return RejectReason::DuplicateOrderId;
+        case AddStatus::WouldNotFullyFill:
+            return RejectReason::FokNotFillable;
+        default:
+            std::unreachable();
+        }
+    }
 
   private: // data
     std::vector<OrderId> eod_purge_ids_;

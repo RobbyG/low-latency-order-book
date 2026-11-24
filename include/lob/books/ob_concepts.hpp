@@ -54,6 +54,9 @@ concept OrderBookL3View = requires(const Book &const_book, OrderId id, Side side
 };
 
 template <typename Book>
+concept OrderBookSkeleton = OrderBookConstructible<Book> && OrderBookCommands<Book>;
+
+template <typename Book>
 concept OrderBookStats = true; // placeholder
 
 template <typename Book>
