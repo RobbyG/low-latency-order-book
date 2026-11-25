@@ -132,8 +132,8 @@ template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash> class Den
 
     // L3 view
     template <Side S>
-    [[nodiscard]] CopyResult copy_orders_at_price(Price price,
-                                                  std::span<OrderView> out) const noexcept;
+    [[nodiscard]] CopyResult copy_side_orders_at_price(Price price,
+                                                       std::span<OrderView> out) const noexcept;
 
     template <Side S> [[nodiscard]] const Level *best_price_level(Price &price) const noexcept;
 

@@ -34,7 +34,7 @@ struct OrderRejected {
 
 using EventType = std::variant<OrderRested, OrderCancelled, OrderReduced, OrderRejected, Trade>;
 
-struct alignas(64) MarketEvent {
+struct alignas(cache_line_size) MarketEvent {
     SequenceNumber seq;
     Timestamp t;
     EventType type;

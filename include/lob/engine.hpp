@@ -17,8 +17,11 @@ namespace lob {
 
 using CommandRing = SpscRing<Command, command_ring_capacity>;
 
-template <books::OrderBookCommands Book> class Engine final {
+template <books::OrderBookSkeleton Book> class Engine final {
   public:
+    explicit Engine(typename Book::Config config)
+        : command_ring_{}, event_ring_{}, event_writer_(event_ring_), order_book_(config) {}
+
     Engine(const Engine &) = delete;
     Engine &operator=(const Engine &) = delete;
     Engine(Engine &&) = delete;
@@ -36,15 +39,15 @@ template <books::OrderBookCommands Book> class Engine final {
     void book_loop();
     void output_loop();
 
-    std::thread input_thread_;
-    std::thread book_thread_;
-    std::thread output_thread_;
+    CommandRing command_ring_;
+    EventRing event_ring_;
+    EventWriter event_writer_;
 
-    std::unique_ptr<CommandRing> command_ring_;
-    std::unique_ptr<TradeRing> trade_ring_;
+    alignas(cache_line_size) Book order_book_;
 
-    EventWriter trade_writer_;
-    Book order_book_;
+    std::jthread input_thread_;
+    std::jthread book_thread_;
+    std::jthread output_thread_;
 
     std::atomic<bool> stop_engine_requested_{false};
     std::atomic<bool> input_thread_done_{false};

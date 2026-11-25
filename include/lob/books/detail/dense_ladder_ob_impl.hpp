@@ -141,16 +141,14 @@ void DenseLadderOrderBook<BandWidth, Hash>::end_session(EventWriter &event_write
 template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
 template <Side S, bool StpActive>
 auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &remaining,
+                                                        Quantity &stp_decremented,
                                                         Price level_price, const NewOrder &order,
                                                         EventWriter &event_writer) noexcept
     -> MatchOutcome {
-    bool emit_trade;
-    if (level.head == invalid_resting_index)
-        return MatchOutcome::Exhausted;
 
     std::uint32_t resting_index = level.head;
     while (resting_index != invalid_resting_index && remaining > Quantity{0}) {
-        emit_trade = true;
+        bool emit_trade = true;
         std::uint32_t node_index_copy = resting_index;
         RestingOrderNode &node = resting_order_pool_[resting_index];
         const OrderId resting_id = node.id;
@@ -194,6 +192,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
 
                 event_writer.write_event(trade);
             } else {
+                stp_decremented += resting_quantity;
                 event_writer.write_event(OrderCancelled{.id = resting_id});
             }
         } else {
@@ -201,15 +200,16 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
             node.quantity -= remaining;
             if (emit_trade) {
                 const Trade trade{.aggressive_order_id = order.id,
-                                  .resting_order_id = node.id,
+                                  .resting_order_id = resting_id,
                                   .price = level_price,
                                   .quantity = remaining,
                                   .aggressive_side = S};
 
                 event_writer.write_event(trade);
             } else {
+                stp_decremented += remaining;
                 event_writer.write_event(
-                    OrderReduced{.id = node.id, .new_quantity = node.quantity});
+                    OrderReduced{.id = resting_id, .new_quantity = node.quantity});
             }
             remaining = Quantity{0};
         }
@@ -224,15 +224,17 @@ auto DenseLadderOrderBook<BandWidth, Hash>::match_level(Level &level, Quantity &
 template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
 template <Side S, bool StpActive>
 MatchOutcome
-DenseLadderOrderBook<BandWidth, Hash>::match_order(Quantity &remaining, const NewOrder &order,
+DenseLadderOrderBook<BandWidth, Hash>::match_order(Quantity &remaining, Quantity &stp_decremented,
+                                                   const NewOrder &order,
                                                    EventWriter &event_writer) noexcept {
-    Price limit = effective_limit(order);
+    const Price limit = effective_limit(order);
 
     constexpr Side RestingSide = S == Side::Buy ? Side::Sell : Side::Buy;
 
     MatchOutcome outcome = MatchOutcome::Exhausted;
     auto visit = [&](Level &level, Price price) {
-        outcome = match_level<S, StpActive>(level, remaining, price, order, event_writer);
+        outcome = match_level<S, StpActive>(level, remaining, stp_decremented, price, order,
+                                            event_writer);
         return outcome == MatchOutcome::Exhausted ? WalkControl::Continue : WalkControl::Stop;
     };
 
@@ -263,15 +265,28 @@ AddResult
 DenseLadderOrderBook<BandWidth, Hash>::add_validated_order(const NewOrder &order,
                                                            EventWriter &event_writer) noexcept {
     Quantity remaining = order.quantity;
+    Quantity stp_decremented{0};
     MatchOutcome match_outcome;
     if (order.side == Side::Buy)
-        match_outcome = order.stp_id != StpId{0}
-                            ? match_order<Side::Buy, true>(remaining, order, event_writer)
-                            : match_order<Side::Buy, false>(remaining, order, event_writer);
+        match_outcome =
+            order.stp_id != StpId{0}
+                ? match_order<Side::Buy, true>(remaining, stp_decremented, order, event_writer)
+                : match_order<Side::Buy, false>(remaining, stp_decremented, order, event_writer);
     else
-        match_outcome = order.stp_id != StpId{0}
-                            ? match_order<Side::Sell, true>(remaining, order, event_writer)
-                            : match_order<Side::Sell, false>(remaining, order, event_writer);
+        match_outcome =
+            order.stp_id != StpId{0}
+                ? match_order<Side::Sell, true>(remaining, stp_decremented, order, event_writer)
+                : match_order<Side::Sell, false>(remaining, stp_decremented, order, event_writer);
+
+    // FOK cannot reach here with stp_decremented > 0; this is for all other types of time in force
+    // if stp_decremented > 0, we cannot output filled since by definition an order is only filled
+    // if its entire quantity traded so we output aborted instead
+    assert((order.time_in_force != TimeInForce::Fok ||
+            (match_outcome == MatchOutcome::Filled && stp_decremented == Quantity{0})) &&
+           "A validated FOK must execute in full");
+
+    if (match_outcome == MatchOutcome::Filled && stp_decremented > Quantity{0})
+        match_outcome = MatchOutcome::Aborted;
 
     switch (match_outcome) {
     case MatchOutcome::Filled:
@@ -282,9 +297,10 @@ DenseLadderOrderBook<BandWidth, Hash>::add_validated_order(const NewOrder &order
     case MatchOutcome::Exhausted:
         if (order.order_type == OrderType::Limit && order.time_in_force != TimeInForce::Fok &&
             order.time_in_force != TimeInForce::Ioc) {
-            const AddResult result = order.side == Side::Buy
-                                         ? this->template rest_order<Side::Buy>(remaining, order)
-                                         : this->template rest_order<Side::Sell>(remaining, order);
+            AddResult result = order.side == Side::Buy
+                                   ? this->template rest_order<Side::Buy>(remaining, order)
+                                   : this->template rest_order<Side::Sell>(remaining, order);
+            result.stp_decremented = stp_decremented;
             if (result.status == AddStatus::Rested)
                 event_writer.write_event(OrderRested{.id = order.id,
                                                      .price = order.price,
@@ -297,6 +313,7 @@ DenseLadderOrderBook<BandWidth, Hash>::add_validated_order(const NewOrder &order
         [[fallthrough]];
     case MatchOutcome::Aborted:
         return AddResult{.remaining = remaining,
+                         .stp_decremented = stp_decremented,
                          .status = AddStatus::RemainderCancelled,
                          .outcome = match_outcome};
     }
@@ -331,7 +348,7 @@ auto DenseLadderOrderBook<BandWidth, Hash>::scan_level(const Level &level, Price
                     continue;
 
                 case SelfTradeResolve::DecrementAndCancel:
-                    break;
+                    return MatchOutcome::Aborted;
                 }
             }
 

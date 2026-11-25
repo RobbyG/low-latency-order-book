@@ -111,8 +111,8 @@ CopyResult
 DenseLadderCore<BandWidth, Hash>::copy_orders_at_price(Side side, Price price,
                                                        std::span<OrderView> out) const noexcept {
 
-    return side == Side::Buy ? copy_orders_at_price<Side::Buy>(price, out)
-                             : copy_orders_at_price<Side::Sell>(price, out);
+    return side == Side::Buy ? copy_side_orders_at_price<Side::Buy>(price, out)
+                             : copy_side_orders_at_price<Side::Sell>(price, out);
 }
 
 // extra public API
@@ -406,9 +406,8 @@ std::uint32_t DenseLadderCore<BandWidth, Hash>::level_count() const noexcept {
 
 template <std::size_t BandWidth, lob::hashing::OrderIdHashPolicy Hash>
 template <Side S>
-CopyResult
-DenseLadderCore<BandWidth, Hash>::copy_orders_at_price(Price price,
-                                                       std::span<OrderView> out) const noexcept {
+CopyResult DenseLadderCore<BandWidth, Hash>::copy_side_orders_at_price(
+    Price price, std::span<OrderView> out) const noexcept {
     const Level *level = find_level<S>(price);
     if (level == nullptr)
         return CopyResult{.written = 0, .available = 0};

@@ -62,12 +62,13 @@ class DenseLadderOrderBook final : public DenseLadderCore<BandWidth, Hash> {
 
   private: // matching
     template <Side S, bool StpActive>
-    [[nodiscard]] MatchOutcome match_level(Level &level, Quantity &remaining, Price level_price,
-                                           const NewOrder &order,
-                                           EventWriter &event_writer) noexcept;
+    [[nodiscard]] MatchOutcome
+    match_level(Level &level, Quantity &remaining, Quantity &stp_decremented, Price level_price,
+                const NewOrder &order, EventWriter &event_writer) noexcept;
 
     template <Side S, bool StpActive>
-    [[nodiscard]] MatchOutcome match_order(Quantity &remaining, const NewOrder &order,
+    [[nodiscard]] MatchOutcome match_order(Quantity &remaining, Quantity &stp_decremented,
+                                           const NewOrder &order,
                                            EventWriter &event_writer) noexcept;
 
     // validate and add

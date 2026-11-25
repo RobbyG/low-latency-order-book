@@ -39,6 +39,7 @@ enum class AddStatus : std::uint8_t {
 
 struct AddResult {
     Quantity remaining;
+    Quantity stp_decremented;
     AddStatus status;
     MatchOutcome outcome;
 
@@ -51,7 +52,7 @@ struct AddResult {
     }
 };
 
-static_assert(sizeof(AddResult) <= 16, "AddResult size must be <= 16 bytes");
+static_assert(sizeof(AddResult) <= 24, "AddResult size must be <= 24 bytes");
 
 enum class CancelStatus : std::uint8_t {
     Cancelled,
