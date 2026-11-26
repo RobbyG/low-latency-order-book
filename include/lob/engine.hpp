@@ -17,7 +17,8 @@ namespace lob {
 
 using CommandRing = SpscRing<Command, command_ring_capacity>;
 
-template <books::OrderBookSkeleton Book, books::OrderBookMirror Mirror> class Engine final {
+template <books::OrderBookSkeleton Book, books::OrderBookMirror Mirror, input::InputSource Input>
+class Engine final {
 
   public: // construction
     explicit Engine(typename Book::Config config) : {}
