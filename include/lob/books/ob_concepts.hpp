@@ -53,14 +53,20 @@ concept OrderBookL3View = requires(const Book &const_book, OrderId id, Side side
     } noexcept -> std::same_as<CopyResult>;
 };
 
+template <typename Mirror>
+concept MirrorConcept = requires(Mirror &mirror, const MarketEvent &event) {
+    { mirror.apply_event(event) } noexcept -> std::same_as<void>;
+};
+
 template <typename Book>
 concept OrderBookSkeleton = OrderBookConstructible<Book> && OrderBookCommands<Book>;
 
 template <typename Book>
-concept OrderBookStats = true; // placeholder
+concept OrderBookImpl = OrderBookConstructible<Book> && OrderBookCommands<Book> &&
+                        OrderBookL1View<Book> && OrderBookL2View<Book> && OrderBookL3View<Book>;
 
-template <typename Book>
-concept OrderBookImpl =
-    OrderBookConstructible<Book> && OrderBookCommands<Book> && OrderBookL1View<Book> &&
-    OrderBookL2View<Book> && OrderBookL3View<Book> && OrderBookStats<Book>;
+template <typename Mirror>
+concept OrderBookMirror =
+    OrderBookConstructible<Mirror> && OrderBookL1View<Mirror> && OrderBookL2View<Mirror> &&
+    OrderBookL3View<Mirror> && MirrorConcept<Mirror>;
 } // namespace lob::books

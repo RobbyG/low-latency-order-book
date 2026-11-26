@@ -1,9 +1,11 @@
 #pragma once
 
 #include <lob/domain_types.hpp>
+#include <lob/hardware_constants.hpp>
 #include <lob/order_book_results.hpp>
 #include <lob/trade.hpp>
 
+#include <type_traits>
 #include <variant>
 
 namespace lob {
@@ -42,5 +44,5 @@ struct alignas(cache_line_size) MarketEvent {
 
 static_assert(std::is_trivially_copyable_v<MarketEvent> &&
               "all even types must be trivially copyable");
-static_assert(sizeof(MarketEvent) <= 64);
+static_assert(sizeof(MarketEvent) <= cache_line_size);
 } // namespace lob
