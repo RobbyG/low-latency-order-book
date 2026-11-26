@@ -3,6 +3,7 @@
 #include <lob/books/ob_concepts.hpp>
 #include <lob/command.hpp>
 #include <lob/event_writer.hpp>
+#include <lob/input/source_concepts.hpp>
 #include <lob/instrument.hpp>
 #include <lob/rings_config.hpp>
 #include <lob/spsc_ring.hpp>
