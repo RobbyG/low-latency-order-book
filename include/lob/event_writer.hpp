@@ -10,7 +10,7 @@ namespace lob {
 using EventRing = SpscRing<MarketEvent, event_ring_capacity>;
 
 // matcher stalls if event ring is full, ring size should be large enough to avoid this, but if it
-// happens, we pause the CPU to avoid busy waiting
+// happens, we pause the CPU
 
 class EventWriter final {
   public:

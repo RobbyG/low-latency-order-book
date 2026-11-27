@@ -23,13 +23,20 @@ class ReplaySource {
     ReplaySource &operator=(ReplaySource &&) = default;
 
     // control API
-    bool poll(Command &command) noexcept;
-    bool finished() const noexcept;
+    bool poll(Command &command) noexcept {
+        if (next_ == commands_.size())
+            finished_ = true;
+    }
+
+    bool finished() const noexcept {
+        return finished_;
+    }
 
   private: // data members
     std::vector<Command> commands_;
     std::size_t next_{0};
     ReplayMode mode_;
+    bool finished_{false};
 };
 
 } // namespace input

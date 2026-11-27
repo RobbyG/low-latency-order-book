@@ -13,7 +13,10 @@ namespace lob::books {
 
 template <typename Book>
 concept OrderBookConstructible =
-    requires { typename Book::Config; } && std::constructible_from<Book, typename Book::Config>;
+    requires { typename Book::Config; } && std::constructible_from<Book, typename Book::Config> &&
+    requires(const typename Book::Config &config) {
+        { config.max_orders } -> std::convertible_to<std::uint32_t>;
+    };
 
 template <typename Book>
 concept OrderBookCommands = requires(Book &book, const NewOrder &order, OrderId id,
